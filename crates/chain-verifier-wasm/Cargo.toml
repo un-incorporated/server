@@ -1,0 +1,28 @@
+[package]
+name = "chain-verifier-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# cdylib → the .wasm artifact built by `build.sh` for browser embedding.
+# rlib   → lets us run the same code as native unit tests via `cargo test`.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Disable chain-store's `storage` feature — the verifier needs only
+# the hash algorithm, not the on-disk layer (which pulls in
+# uninc-common / async-nats / ring, all native-only).
+chain-store = { workspace = true, default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+
+# wasm-bindgen is only needed when building the cdylib for the browser;
+# for `cargo test` (native rlib) it still compiles but the #[wasm_bindgen]
+# exports become no-ops we don't call from tests.
+wasm-bindgen = "0.2"
+serde-wasm-bindgen = "0.6"
+
+[dev-dependencies]
+uninc-common.workspace = true

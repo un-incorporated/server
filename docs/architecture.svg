@@ -1,0 +1,293 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  server/docs/architecture.svg
+
+  Rendered directly by GitHub's markdown <img> reference. A single <style>
+  block with @media (prefers-color-scheme: dark) overrides gives us one
+  file that reads cleanly on both GitHub light and dark themes — no
+  #gh-dark-mode-only fork required.
+
+  Visual convention (matches the web landing's ProtocolDiagram):
+    accent (blue)  = proxy perimeter · the audit gate
+    success (green)= chain + observer · the verification plane
+    neutral (gray) = your app · your DB · ambient wiring
+    dashed outer  = one GCE VM boundary (the "Unincorporated server")
+                    uninc-proxy, NATS JetStream and chain-engine are
+                    sibling processes co-located on that VM; any
+                    frontend (www /v/ pages, customer UI, curl) lives
+                    outside it and reads the :9091 chain API across
+                    the network.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 960 700"
+     role="img"
+     aria-labelledby="title desc"
+     font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">Unincorporated server topology</title>
+  <desc id="desc">The customer app connects to uninc-proxy, which runs a guard pipeline with a synchronous fail-closed audit gate. The proxy, NATS JetStream and chain-engine are sibling processes co-located on a single GCE VM (the "Unincorporated server"). Any frontend — www's /v/ pages on Cloud Run, a customer-owned UI, or a curl client — lives outside that VM and reads the :9091 chain API across the network, with end-user views verifying client-side via WASM.</desc>
+
+  <style>
+    .fg      { fill: #0B0D12; }
+    .fg-sub  { fill: #4B5563; }
+    .fg-mute { fill: #6B7280; }
+    .accent  { fill: #2563EB; }
+    .verify  { fill: #059669; }
+    .surface { fill: #FFFFFF; }
+    .card-bg { fill: #F7F8FA; }
+
+    .s-fg      { stroke: #0B0D12; }
+    .s-fg-mute { stroke: #6B7280; }
+    .s-accent  { stroke: #2563EB; }
+    .s-verify  { stroke: #059669; }
+    .s-line    { stroke: #9CA3AF; }
+
+    .fill-accent-soft { fill: #2563EB; fill-opacity: 0.08; }
+    .fill-verify-soft { fill: #059669; fill-opacity: 0.10; }
+    .fill-neutral-soft{ fill: #6B7280; fill-opacity: 0.06; }
+    .fill-vm-soft     { fill: #6B7280; fill-opacity: 0.03; }
+
+    .label-h    { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+    .label      { font-size: 13px; font-weight: 600; }
+    .mono       { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    .mono-sm    { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 11px; }
+    .body       { font-size: 12px; }
+    .small      { font-size: 11px; }
+    .tag        { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+
+    @media (prefers-color-scheme: dark) {
+      .fg       { fill: #F3F4F6; }
+      .fg-sub   { fill: #CBD5E1; }
+      .fg-mute  { fill: #9CA3AF; }
+      .accent   { fill: #60A5FA; }
+      .verify   { fill: #34D399; }
+      .surface  { fill: #0F1218; }
+      .card-bg  { fill: #111827; }
+
+      .s-fg      { stroke: #F3F4F6; }
+      .s-fg-mute { stroke: #9CA3AF; }
+      .s-accent  { stroke: #60A5FA; }
+      .s-verify  { stroke: #34D399; }
+      .s-line    { stroke: #4B5563; }
+
+      .fill-accent-soft { fill: #60A5FA; fill-opacity: 0.12; }
+      .fill-verify-soft { fill: #34D399; fill-opacity: 0.14; }
+      .fill-neutral-soft{ fill: #9CA3AF; fill-opacity: 0.08; }
+      .fill-vm-soft     { fill: #9CA3AF; fill-opacity: 0.04; }
+    }
+  </style>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="s-line" fill="context-stroke"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="accent"/>
+    </marker>
+    <marker id="arrow-verify" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="verify"/>
+    </marker>
+  </defs>
+
+  <!-- ═══ VM boundary: one GCE VM wraps proxy · NATS · chain-engine ═══ -->
+  <rect x="220" y="12" width="520" height="472" rx="16"
+        class="fill-vm-soft"/>
+  <rect x="220" y="12" width="520" height="472" rx="16"
+        class="s-fg-mute" stroke-width="2" stroke-dasharray="7 5"
+        fill="none"/>
+  <text x="480" y="32" text-anchor="middle" class="tag fg-mute">UNINCORPORATED SERVER · ONE GCE VM</text>
+
+  <!-- ═══ OUTSIDE VM (left): Your app ═══════════════════════════════════ -->
+  <g>
+    <rect x="20" y="50" width="180" height="100" rx="10"
+          class="fill-neutral-soft"/>
+    <rect x="20" y="50" width="180" height="100" rx="10"
+          class="s-fg-mute" stroke-width="1.5" stroke-dasharray="5 4"
+          fill="none"/>
+    <text x="110" y="74" text-anchor="middle" class="tag fg-mute">YOUR APP</text>
+    <text x="110" y="96" text-anchor="middle" class="label fg">Postgres · MongoDB · S3</text>
+    <text x="110" y="116" text-anchor="middle" class="small fg-mute">one connection-string change</text>
+    <text x="110" y="134" text-anchor="middle" class="mono-sm fg-mute">Prisma · Mongoose · boto3 · …</text>
+  </g>
+
+  <!-- ═══ OUTSIDE VM (right top): Upstream database ═════════════════════ -->
+  <g>
+    <rect x="760" y="50" width="180" height="100" rx="10"
+          class="fill-neutral-soft"/>
+    <rect x="760" y="50" width="180" height="100" rx="10"
+          class="s-fg-mute" stroke-width="1.5" fill="none"/>
+    <text x="850" y="74" text-anchor="middle" class="tag fg-mute">UPSTREAM DATABASE</text>
+    <text x="850" y="96" text-anchor="middle" class="mono-sm fg">Postgres :5432</text>
+    <text x="850" y="112" text-anchor="middle" class="mono-sm fg">MongoDB  :27017</text>
+    <text x="850" y="128" text-anchor="middle" class="mono-sm fg">MinIO    :9000</text>
+  </g>
+
+  <!-- ═══ INSIDE VM: uninc-proxy (Rust process) ═════════════════════════ -->
+  <g>
+    <rect x="236" y="48" width="488" height="232" rx="14"
+          class="fill-accent-soft"/>
+    <rect x="236" y="48" width="488" height="232" rx="14"
+          class="s-accent" stroke-width="2.5" fill="none"/>
+    <text x="480" y="70" text-anchor="middle" class="tag accent">UNINC-PROXY · RUST PROCESS</text>
+    <text x="480" y="88" text-anchor="middle" class="mono-sm fg-sub">speaks native Postgres / MongoDB / S3 wire · verification engine in-proc</text>
+
+    <!-- Guard pipeline steps -->
+    <g>
+      <rect x="252" y="102" width="456" height="26" rx="5" class="surface"/>
+      <rect x="252" y="102" width="456" height="26" rx="5" fill="none" class="s-accent" stroke-width="1"/>
+      <text x="264" y="119" class="mono-sm fg-sub">1</text>
+      <text x="286" y="119" class="body fg">connection cap</text>
+      <text x="696" y="119" text-anchor="end" class="mono-sm fg-mute">semaphore</text>
+    </g>
+    <g>
+      <rect x="252" y="132" width="456" height="26" rx="5" class="surface"/>
+      <rect x="252" y="132" width="456" height="26" rx="5" fill="none" class="s-accent" stroke-width="1"/>
+      <text x="264" y="149" class="mono-sm fg-sub">2</text>
+      <text x="286" y="149" class="body fg">rate limit</text>
+      <text x="696" y="149" text-anchor="end" class="mono-sm fg-mute">token bucket</text>
+    </g>
+    <g>
+      <rect x="252" y="162" width="456" height="26" rx="5" class="surface"/>
+      <rect x="252" y="162" width="456" height="26" rx="5" fill="none" class="s-accent" stroke-width="1"/>
+      <text x="264" y="179" class="mono-sm fg-sub">3</text>
+      <text x="286" y="179" class="body fg">parse wire protocol</text>
+    </g>
+    <g>
+      <rect x="252" y="192" width="456" height="40" rx="5" class="fill-verify-soft"/>
+      <rect x="252" y="192" width="456" height="40" rx="5" fill="none" class="s-verify" stroke-width="1.5"/>
+      <text x="264" y="210" class="mono-sm fg-sub">4</text>
+      <text x="286" y="210" class="label verify">audit gate — fail-closed</text>
+      <text x="286" y="226" class="small fg-sub">publish to NATS · wait for ack · no ack → rejected</text>
+    </g>
+    <g>
+      <rect x="252" y="236" width="456" height="26" rx="5" class="surface"/>
+      <rect x="252" y="236" width="456" height="26" rx="5" fill="none" class="s-accent" stroke-width="1"/>
+      <text x="264" y="253" class="mono-sm fg-sub">5</text>
+      <text x="286" y="253" class="body fg">forward query · return result</text>
+    </g>
+
+    <text x="480" y="273" text-anchor="middle" class="mono-sm fg-mute">:6432 pg · :28017 mongo · :10000 s3 · :9090 health · :9091 chain API</text>
+  </g>
+
+  <!-- ═══ INSIDE VM: NATS JetStream — sibling container on the VM ═══════ -->
+  <g>
+    <rect x="250" y="300" width="210" height="148" rx="10"
+          class="fill-verify-soft"/>
+    <rect x="250" y="300" width="210" height="148" rx="10"
+          class="s-verify" stroke-width="2" fill="none"/>
+    <text x="355" y="324" text-anchor="middle" class="tag verify">NATS JETSTREAM · SIBLING</text>
+    <text x="355" y="348" text-anchor="middle" class="label fg">uninc.access.*</text>
+    <text x="355" y="368" text-anchor="middle" class="small fg-sub">durable · ack-required</text>
+    <text x="355" y="388" text-anchor="middle" class="mono-sm fg-mute">:4222 loopback</text>
+    <text x="355" y="416" text-anchor="middle" class="small fg-mute">own container</text>
+    <text x="355" y="432" text-anchor="middle" class="small fg-mute">(docker compose)</text>
+  </g>
+
+  <!-- ═══ INSIDE VM: chain-engine — sibling process on the VM ═══════════ -->
+  <g>
+    <rect x="500" y="300" width="220" height="148" rx="10"
+          class="fill-verify-soft"/>
+    <rect x="500" y="300" width="220" height="148" rx="10"
+          class="s-verify" stroke-width="2" fill="none"/>
+    <text x="610" y="324" text-anchor="middle" class="tag verify">CHAIN-ENGINE · SIBLING</text>
+    <text x="610" y="348" text-anchor="middle" class="label fg">per-user Merkle chain</text>
+    <text x="610" y="368" text-anchor="middle" class="small fg-sub">append-only · hash-linked</text>
+    <text x="610" y="388" text-anchor="middle" class="mono-sm fg-mute">SHA-256 · AES-256-GCM</text>
+    <text x="610" y="416" text-anchor="middle" class="small fg-mute">own process</text>
+    <text x="610" y="432" text-anchor="middle" class="small fg-mute">(consumes from NATS)</text>
+  </g>
+
+  <!-- ═══ OUTSIDE VM: Any frontend reading :9091 — not on the VM ═══════ -->
+  <g>
+    <rect x="760" y="180" width="180" height="268" rx="10"
+          class="fill-accent-soft"/>
+    <rect x="760" y="180" width="180" height="268" rx="10"
+          class="s-accent" stroke-width="2" fill="none"/>
+    <text x="850" y="204" text-anchor="middle" class="tag accent">:9091 READERS</text>
+    <text x="850" y="222" text-anchor="middle" class="small fg-mute">not on the VM</text>
+    <text x="850" y="252" text-anchor="middle" class="label fg">www /v/ pages</text>
+    <text x="850" y="270" text-anchor="middle" class="small fg-sub">Next.js · Cloud Run</text>
+    <text x="850" y="294" text-anchor="middle" class="label fg">+ customer frontend</text>
+    <text x="850" y="312" text-anchor="middle" class="small fg-sub">direct :9091 fetch</text>
+    <text x="850" y="354" text-anchor="middle" class="small fg-sub">WASM client-side</text>
+    <text x="850" y="370" text-anchor="middle" class="small fg-sub">verification</text>
+    <text x="850" y="402" text-anchor="middle" class="mono-sm fg-mute">server cannot fake</text>
+    <text x="850" y="418" text-anchor="middle" class="mono-sm fg-mute">a passing result</text>
+  </g>
+
+  <!-- ═══ Arrows: app ⇄ proxy ⇄ upstream (cross the VM boundary) ═══════ -->
+  <line x1="202" y1="92"  x2="234" y2="92"
+        class="s-line" stroke-width="1.5"
+        marker-end="url(#arrow)"/>
+  <text x="218" y="84" text-anchor="middle" class="mono-sm fg-mute">query</text>
+
+  <line x1="726" y1="92"  x2="758" y2="92"
+        class="s-line" stroke-width="1.5"
+        marker-end="url(#arrow)"/>
+  <text x="742" y="84" text-anchor="middle" class="mono-sm fg-mute">forward</text>
+
+  <line x1="758" y1="128" x2="726" y2="240"
+        class="s-line" stroke-width="1.5"
+        marker-end="url(#arrow)"/>
+  <text x="756" y="182" class="mono-sm fg-mute">result</text>
+
+  <line x1="234" y1="240" x2="202" y2="128"
+        class="s-line" stroke-width="1.5"
+        marker-end="url(#arrow)"/>
+  <text x="208" y="190" class="mono-sm fg-mute">reply</text>
+
+  <!-- ═══ Internal arrows (stay inside the VM) ═════════════════════════ -->
+  <!-- proxy → NATS (audit event, synchronous fail-closed ack) -->
+  <path d="M 340 280 C 340 290 348 296 355 300"
+        class="s-verify" stroke-width="1.6"
+        stroke-dasharray="4 3" fill="none"
+        marker-end="url(#arrow-verify)"/>
+  <text x="244" y="296" class="mono-sm verify">audit event · fail-closed ack</text>
+
+  <!-- NATS → chain-engine (consume) -->
+  <line x1="462" y1="374" x2="498" y2="374"
+        class="s-verify" stroke-width="1.6"
+        marker-end="url(#arrow-verify)"/>
+  <text x="480" y="366" text-anchor="middle" class="mono-sm verify">consume</text>
+
+  <!-- ═══ Cross-boundary arrow: chain-engine → :9091 readers ══════════ -->
+  <!-- The important one: any frontend is OFF the VM and reads the chain  -->
+  <!-- API across the network.                                             -->
+  <line x1="722" y1="320" x2="758" y2="320"
+        class="s-accent" stroke-width="1.8"
+        marker-end="url(#arrow-accent)"/>
+  <text x="740" y="312" text-anchor="middle" class="mono-sm accent">:9091</text>
+  <text x="740" y="338" text-anchor="middle" class="small fg-mute">across the net</text>
+
+  <!-- ═══ Bottom row: chain entry card + invariant ═════════════════════ -->
+  <g>
+    <rect x="20" y="520" width="580" height="160" rx="10"
+          class="card-bg"/>
+    <rect x="20" y="520" width="580" height="160" rx="10"
+          class="s-fg-mute" stroke-width="1" fill="none"/>
+    <text x="38" y="544" class="tag fg-mute">CHAIN ENTRY (what the user sees)</text>
+    <text x="38" y="572" class="mono-sm fg">{</text>
+    <text x="54" y="590" class="mono-sm fg-sub">"index": 7, "previous_hash": "b94d27b9…",</text>
+    <text x="54" y="608" class="mono-sm fg-sub">"admin_id": "dba@company.com",</text>
+    <text x="54" y="626" class="mono-sm fg-sub">"action": "Read", "resource": "users",</text>
+    <text x="54" y="644" class="mono-sm fg-sub">"scope": "columns: email, phone; filter: id = 42",</text>
+    <text x="54" y="662" class="mono-sm fg-sub">"query_fingerprint": "a1b2c3d4…", "entry_hash": "e3b0c442…"</text>
+    <text x="38" y="678" class="mono-sm fg">}</text>
+  </g>
+
+  <g>
+    <rect x="630" y="520" width="310" height="160" rx="10"
+          class="fill-accent-soft"/>
+    <rect x="630" y="520" width="310" height="160" rx="10"
+          class="s-accent" stroke-width="1.5" fill="none"/>
+    <text x="648" y="544" class="tag accent">LOG-BEFORE-ACCESS</text>
+    <text x="648" y="572" class="label fg">No chain entry,</text>
+    <text x="648" y="590" class="label fg">no database access.</text>
+    <text x="648" y="618" class="small fg-sub">The audit gate is synchronous</text>
+    <text x="648" y="634" class="small fg-sub">and fail-closed. If NATS is</text>
+    <text x="648" y="650" class="small fg-sub">unreachable, the query is</text>
+    <text x="648" y="666" class="small fg-sub">rejected — never forwarded.</text>
+  </g>
+</svg>

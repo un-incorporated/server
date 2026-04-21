@@ -1,0 +1,49 @@
+# docker-compose.observer.yml — observer VM stack.
+#
+# Runs on the dedicated observer VM in a multi-VM topology. See
+# ARCHITECTURE.md for the 5-VM shape (1 proxy + 3 DB replicas + 1
+# observer). The observer VM should be configured with:
+#
+#   - No public IP
+#   - No SSH daemon
+#   - Inbound :2026 open only to the proxy VM service account tag
+#   - Outbound to the DB replicas for replication-stream consumption
+#   - Outbound to whatever control plane operators use (heartbeat, logs)
+#
+# The observer container runs with read-only replication credentials
+# that must be provisioned separately from the proxy's credentials —
+# that's what makes the observer structurally independent of the proxy.
+#
+# Config is mounted from /etc/uninc/observer.yml which the operator's
+# provisioning system renders at deploy time with the correct endpoints
+# and secrets.
+
+services:
+  uninc-observer:
+    image: ghcr.io/uninc-app/observer:latest
+    container_name: uninc-observer
+    restart: unless-stopped
+    ports:
+      - "2026:2026"   # internal HTTP for verification-read
+    volumes:
+      - /etc/uninc/observer.yml:/etc/uninc/observer.yml:ro
+      - observer-chains:/data/observer-chains
+    environment:
+      - RUST_LOG=info
+      - OBSERVER_CONFIG=/etc/uninc/observer.yml
+    networks:
+      - observer-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:2026/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  observer-chains:
+    driver: local
+
+networks:
+  observer-net:
+    driver: bridge

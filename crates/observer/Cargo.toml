@@ -1,0 +1,55 @@
+[package]
+name = "observer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "uninc-observer"
+path = "src/main.rs"
+
+[lib]
+name = "observer"
+path = "src/lib.rs"
+
+[dependencies]
+# Runtime + basics
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+hex = { workspace = true }
+futures = { workspace = true }
+
+# DB clients for subscribers
+tokio-postgres = { workspace = true }
+mongodb = { workspace = true }
+bson = { workspace = true }
+async-nats = { workspace = true }
+pgwire-replication = "0.2"
+dashmap = { workspace = true }
+
+# HTTP endpoint for verification-read
+axum = { workspace = true }
+
+# Shared types. chain-store's workspace entry disables default
+# features so the wasm verifier can link without storage-backend
+# transitive deps; the observer needs the full on-disk ChainStore
+# API so we re-enable the `storage` feature here.
+uninc-common = { workspace = true }
+chain-store = { workspace = true, features = ["storage"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# `oneshot` + `ServiceExt` for exercising the axum router in-process
+# (no tokio::net socket needed). Used by the /entries endpoint tests
+# in src/http.rs.
+tower = { workspace = true, features = ["util"] }

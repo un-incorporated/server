@@ -1,0 +1,18 @@
+; PgBouncer userlist.txt — credential file referenced by pgbouncer.ini's
+; auth_file directive.
+;
+; This file is regenerated at container startup from the POSTGRES_UPSTREAM
+; env var by the entrypoint wrapper (see docker-compose.self-hosted.yml's
+; pgbouncer service command, or startup-proxy.sh for the multi-VM
+; topology). The committed file is a placeholder — do NOT put real
+; credentials here.
+;
+; Format: "username" "password_hash_or_plaintext"
+; For scram-sha-256, the value should be the SCRAM secret string that Postgres
+; stores in pg_shadow, not a plaintext password. The entrypoint wrapper
+; computes it from the plaintext creds in POSTGRES_UPSTREAM.
+;
+; Placeholder line — replaced at container startup. Leaving it present so
+; pgbouncer can parse the file if it's mounted before the entrypoint rewrites
+; it (e.g., during a quick healthcheck poll).
+"placeholder" "placeholder"

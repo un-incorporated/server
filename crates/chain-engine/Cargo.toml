@@ -1,0 +1,39 @@
+[package]
+name = "chain-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "chain-engine"
+path = "src/bin/main.rs"
+
+[dependencies]
+uninc-common.workspace = true
+chain-store = { workspace = true, features = ["storage"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+aes-gcm.workspace = true
+rand.workspace = true
+uuid.workspace = true
+dashmap.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-nats.workspace = true
+chrono.workspace = true
+hex.workspace = true
+futures.workspace = true
+rust-s3.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+# Cross-verifier conformance test (see src/verify.rs tests): exercises the
+# browser-side WASM verifier and the server-side native verifier on the
+# same input matrix to catch drift between the two implementations. Only
+# needed for `cargo test`, never for production binaries.
+chain-verifier-wasm = { path = "../chain-verifier-wasm" }

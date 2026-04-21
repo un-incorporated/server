@@ -1,0 +1,235 @@
+# ===========================================================================
+# uninc.yml — The Unincorporated Server configuration
+#
+# This is the ONLY Uninc-specific file you write. Everything else about
+# your app stays the same — same ORM, same migrations, same code.
+# ===========================================================================
+
+proxy:
+  # --- Protocol listeners ---
+  # Enable the protocols your stack uses. Disable what you don't need.
+  #
+  # The proxy listens on canonical, hard-coded external ports — the
+  # "+1000 shift" documented in LOCAL-DEV.md §"Why the proxy is on :6432":
+  #     Postgres: 6432   (native 5432 + 1000)
+  #     MongoDB:  28017  (native 27017 + 1000)
+  #     S3 HTTP:  10000  (native 9000 + 1000)
+  # These ports cannot be overridden via config — they are wired into the
+  # proxy binary on purpose so clients get a consistent "paste this
+  # connection string" experience. Your clients connect to THESE ports.
+  # The `upstream:` value below is where the proxy forwards TO, using the
+  # native port of whatever data primitive you're running.
+
+  postgres:
+    enabled: true
+    upstream: "postgres://user:pass@postgres:5432/mydb"
+    pool:
+      min: 2
+      max: 20
+      idle_timeout_secs: 300
+      connection_timeout_secs: 5
+
+  mongodb:
+    enabled: true
+    upstream: "mongodb://user:pass@mongo:27017/mydb"
+    pool:
+      min: 2
+      max: 20
+      idle_timeout_secs: 300
+
+  s3:
+    enabled: true
+    upstream: "http://minio:9000"
+    user_data_patterns:
+      - bucket: uploads
+        key_pattern: "users/(?P<user_id>[^/]+)/.*"
+      - bucket: media
+        key_pattern: "(?P<user_id>[^/]+)/.*"
+    excluded_prefixes:
+      - system/
+      - logs/
+    log_presigned_url_generation: true
+    multipart_log_on_complete_only: true
+
+  # --- TLS (optional) ---
+  tls:
+    enabled: false
+    # cert_path: /etc/uninc/tls/cert.pem
+    # key_path: /etc/uninc/tls/key.pem
+
+  # --- NATS event queue ---
+  nats:
+    url: "nats://nats:4222"
+    subject_prefix: "uninc.access"
+    # Deployment chain uses subject: {prefix}._deployment (captured by wildcard).
+    # Per-user chains use: {prefix}.{user_id}.
+
+  # --- Identity classification ---
+  # How the proxy distinguishes admin access from normal app traffic.
+  # Default: everything is ADMIN unless positively matched as APP.
+  identity:
+    mode: source+credential    # credential | source+credential | mtls+source+credential
+
+    # Whitelist your app containers (Docker service names or IPs)
+    app_sources:
+      - hostname: app
+      - hostname: worker
+      # - ip: 10.128.0.5        # For VM deployments
+
+    # Admin database credentials (these connections get LOGGED)
+    admin_credentials:
+      postgres:
+        - username: admin
+        - username: dba
+        - username: postgres
+      mongodb:
+        - username: admin
+        - username: root
+      s3:
+        - access_key: ADMIN_ACCESS_KEY_ID
+
+    # App database credentials (these connections are PASSTHROUGH)
+    app_credentials:
+      postgres:
+        - username: app_user
+      mongodb:
+        - username: app_user
+      s3:
+        - access_key: APP_ACCESS_KEY_ID
+
+    # Detect admins running queries from inside app containers (docker exec)
+    behavioral_fingerprinting: true
+
+    # mTLS client certificates (strongest identity signal, optional)
+    # mtls:
+    #   enabled: true
+    #   app_cert: /etc/uninc/certs/app-client.crt
+    #   ca_cert: /etc/uninc/certs/ca.crt
+
+  # --- Schema annotation ---
+  # Tell the proxy which tables/collections contain user data.
+  # This is how the proxy knows WHOSE chain to write to.
+  schema:
+    user_tables:
+      - table: users
+        user_id_column: id
+        sensitive_columns: [email, phone, ssn]
+      - table: orders
+        user_id_column: user_id
+      - table: messages
+        user_id_column: [sender_id, recipient_id]   # multi-column
+
+    user_collections:
+      - collection: users
+        user_id_field: _id
+      - collection: messages
+        user_id_field: [sender_id, recipient_id]
+
+    excluded_tables: [migrations, schema_versions]
+
+  # --- Deployment mode ---
+  mode: greenfield             # proxy-only | greenfield | full
+
+# --- Chain engine ---
+chain:
+  storage_path: /data/chains
+  shard_size: 10000            # entries per shard file
+  server_salt: "change-me-to-a-random-string"
+  keystore:
+    type: local_file           # local_file | vault
+
+  # S3-compatible durable backup for chain data (optional).
+  # When configured, entries are dual-written: local disk (hot) + S3 (durable).
+  # s3:
+  #   endpoint: "http://minio:9000"     # or AWS S3 endpoint
+  #   bucket: uninc-chains
+  #   access_key: "${S3_ACCESS_KEY}"
+  #   secret_key: "${S3_SECRET_KEY}"
+  #   region: "us-east-1"
+
+  # LRU disk cache eviction settings.
+  # lru_cache:
+  #   max_bytes: 1073741824             # 1 GB default
+  #   evict_after_verified: true        # only evict entries marked verified by nightly cross-replica check
+
+  # Data retention. Chain entries older than this are auto-deleted.
+  # Default: 365 days (1 year). SOC2/PCI require 1 year minimum.
+  # Users can request earlier deletion under GDPR Article 17.
+  retention_days: 365
+
+# --- Replica verification (multi-VM topology only) ---
+# verification:
+#   enabled: true
+#   replica_count: 3
+#   witness_count: 1
+#   verifier_count: 1
+#
+#   # Connection info for each replica (populated by Terraform in production).
+#   replicas:
+#     - id: replica-0
+#       host: 10.0.2.10
+#       port: 5432
+#       user: uninc
+#       password: "${DB_PASSWORD}"
+#       database: customer_db
+#     - id: replica-1
+#       host: 10.0.2.11
+#       port: 5432
+#       user: uninc
+#       password: "${DB_PASSWORD}"
+#       database: customer_db
+#     - id: replica-2
+#       host: 10.0.2.12
+#       port: 5432
+#       user: uninc
+#       password: "${DB_PASSWORD}"
+#       database: customer_db
+#
+#   assignment:
+#     entropy_sources: [chain_head, system_random]  # drand deferred to v2
+#
+#   timing:
+#     verify_on_session_end: true         # T1: compare session tables on admin disconnect
+#     periodic_hours: 6                   # T2: sample random tables every 6 hours
+#     nightly_full_compare: true          # T3: full comparison, marks entries verified
+#     nightly_compare_hour_utc: 2         # T3 runs at 02:00 UTC (set 18 for APAC)
+#     replication_lag_buffer_ms: 5000     # wait for replicas to catch up before comparing
+#
+#   batch:
+#     summarize_threshold: 1000
+#     checkpoint_interval_rows: 2500
+#
+#   on_failure:
+#     alert: true              # log + send alert (v1: logging only; v2: PagerDuty/Slack)
+#     lock_admin: true         # revoke admin credentials (v1: logging only; v2: real revocation)
+#     auto_rollback: false     # restore from verifier replica (v2, requires Terraform)
+#     quarantine_replica: false # isolate divergent replica (v2, requires Terraform)
+#
+#   # --- Observer-vs-proxy comparison (spec §3.3 + §5.5) ---
+#   # Each scheduled run reads observer state from the observer VM's
+#   # internal HTTP endpoint (:2026) and compares against the proxy's
+#   # deployment chain. Comparison is byte-level equality of the
+#   # canonicalized `ObservedDeploymentEvent` payload (spec §4.12) — a narrow
+#   # structural subset of `DeploymentEvent` carrying only (action, resource,
+#   # actor_id_hash, sorted user-id-hashes, query_fingerprint), with no
+#   # wall-clock timestamp in the hashed bytes. Envelope timestamps on
+#   # each chain are used only to bound the lookup window (Δ_lag,
+#   # default 600 s). Chain-head byte equality is NOT expected or
+#   # required: the two chains have independent lineage. An
+#   # observer-recorded operation whose canonicalized payload bytes are
+#   # absent from the proxy chain fires the failure handler and emits a
+#   # `verification_failure` DeploymentEvent on the deployment chain.
+#   #
+#   # Both fields are required; omit both for single-host / playground
+#   # topologies without an observer. `observer_read_secret` MUST match
+#   # the observer's `ObserverConfig.read_secret` — the observer rejects
+#   # requests without it.
+#   #
+#   # Note: the v1 implementation currently performs head-byte comparison
+#   # as a cheap observer-liveness probe and is LOG-ONLY pending emitter
+#   # alignment (observer and chain-engine both need to emit
+#   # `ObservedDeploymentEvent` payload type 0x03 — spec §4.12). See the
+#   # FOLLOWUP comment in crates/verification/src/task.rs for the
+#   # migration plan.
+#   observer_url: "http://10.0.3.5:2026"
+#   observer_read_secret: "${OBSERVER_READ_SECRET}"

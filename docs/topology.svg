@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  server/docs/topology.svg
+
+  multi-VM deployment topology — static SVG twin of the landing's
+  ProtocolDiagram. Renders inline in GitHub markdown via <img>.
+  Palette-aware via @media (prefers-color-scheme: dark).
+
+  Visual convention (shared with server/docs/architecture.svg and the
+  landing's ProtocolDiagram so the three read as one system):
+
+    accent (blue)     = proxy perimeter (what sits at the public edge)
+    success (green)   = verification plane (chain-MinIO + observer —
+                        independent of the proxy's NATS chain)
+    neutral (gray)    = your app · upstream DBs · ambient wiring
+
+  The observer-VM arrows carry the architectural point that can't be
+  read off the code: the observer subscribes to the database's OWN
+  replication stream (WAL / oplog / bucket notify), not to the app's
+  request or the proxy's audit chain. That's what makes it independent.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 720 740"
+     role="img"
+     aria-labelledby="title desc"
+     font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">Unincorporated multi-VM per-deployment topology</title>
+  <desc id="desc">Per-deployment VPC. Public subnet holds the proxy VM (running uninc-proxy, chain-engine, nats, and the :9091 chain API) plus an optional Cloud Run for the app. Private subnet holds three DB replicas, each with a chain-MinIO sidecar, plus an independent Observer VM. The Observer subscribes to each database's own replication stream — Postgres WAL, MongoDB oplog, MinIO bucket notifications — and cross-verifies the proxy's chain.</desc>
+
+  <style>
+    .accent   { fill: #2563EB; }
+    .verify   { fill: #059669; }
+    .neutral  { fill: #6B7280; }
+    .ink      { fill: #0B0D12; }
+    .line     { fill: #4B5563; }
+    .surface  { fill: #FFFFFF; }
+
+    .s-accent  { stroke: #2563EB; }
+    .s-verify  { stroke: #059669; }
+    .s-neutral { stroke: #6B7280; }
+    .s-line    { stroke: #4B5563; }
+
+    .fill-accent-soft  { fill: #2563EB; fill-opacity: 0.08; }
+    .fill-accent-faint { fill: #2563EB; fill-opacity: 0.04; }
+    .fill-verify-soft  { fill: #059669; fill-opacity: 0.10; }
+    .fill-verify-faint { fill: #059669; fill-opacity: 0.06; }
+    .fill-neutral-soft { fill: #6B7280; fill-opacity: 0.08; }
+
+    .mono    { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    .t-8     { font-size:  8px; }
+    .t-9     { font-size:  9px; }
+    .t-10    { font-size: 10px; }
+    .t-11    { font-size: 11px; }
+    .t-12    { font-size: 12px; }
+    .t-13    { font-size: 13px; }
+    .t-14    { font-size: 14px; }
+    .bold    { font-weight: 700; }
+
+    @media (prefers-color-scheme: dark) {
+      .accent   { fill: #3B82F6; }
+      .verify   { fill: #10B981; }
+      .neutral  { fill: #9CA3AF; }
+      .ink      { fill: #F3F4F6; }
+      .line     { fill: #CBD5E1; }
+      .surface  { fill: #0F1218; }
+
+      .s-accent  { stroke: #3B82F6; }
+      .s-verify  { stroke: #10B981; }
+      .s-neutral { stroke: #9CA3AF; }
+      .s-line    { stroke: #CBD5E1; }
+
+      .fill-accent-soft  { fill: #3B82F6; fill-opacity: 0.12; }
+      .fill-accent-faint { fill: #3B82F6; fill-opacity: 0.06; }
+      .fill-verify-soft  { fill: #10B981; fill-opacity: 0.14; }
+      .fill-verify-faint { fill: #10B981; fill-opacity: 0.07; }
+      .fill-neutral-soft { fill: #9CA3AF; fill-opacity: 0.10; }
+    }
+  </style>
+
+  <!-- ═══ Top row: optional Cloud Run (left) ══════════════════════════ -->
+  <g>
+    <rect x="40" y="24" width="300" height="70" rx="12" class="fill-accent-faint"/>
+    <rect x="40" y="24" width="300" height="70" rx="12"
+          class="s-accent" stroke-width="2" stroke-dasharray="6 4"
+          fill="none" stroke-opacity="0.6"/>
+    <text x="190" y="50" text-anchor="middle" class="t-14 bold accent">CLOUD RUN (optional)</text>
+    <text x="190" y="68" text-anchor="middle" class="t-11 accent" fill-opacity="0.85">your container · &quot;host my app&quot; checkbox</text>
+    <text x="190" y="84" text-anchor="middle" class="t-11 accent" fill-opacity="0.75">egress via VPC connector</text>
+  </g>
+
+  <!-- ═══ Top row: self-hosted app (right) ═════════════════════════════ -->
+  <g>
+    <rect x="380" y="24" width="300" height="70" rx="12" class="fill-neutral-soft"/>
+    <rect x="380" y="24" width="300" height="70" rx="12"
+          class="s-neutral" stroke-width="2" stroke-dasharray="6 4" fill="none"/>
+    <text x="530" y="50" text-anchor="middle" class="t-14 bold ink">YOUR APP (alt)</text>
+    <text x="530" y="68" text-anchor="middle" class="t-11 neutral">Vercel · Fly · your VM · anywhere</text>
+    <text x="530" y="84" text-anchor="middle" class="t-11 neutral">dials proxy's public IP directly</text>
+  </g>
+
+  <!-- ═══ Ingress arrows into the proxy VM ════════════════════════════ -->
+  <g>
+    <line x1="190" y1="94" x2="280" y2="152" class="s-line" stroke-width="1.5"/>
+    <polygon points="275,146 283,154 272,154" class="line"/>
+    <text x="212" y="126" class="mono t-11 line">private IP</text>
+  </g>
+  <g>
+    <line x1="530" y1="94" x2="440" y2="152" class="s-line" stroke-width="1.5"/>
+    <polygon points="444,146 438,154 448,154" class="line"/>
+    <text x="458" y="126" class="mono t-11 line">public IP</text>
+  </g>
+
+  <!-- ═══ Proxy VM (public subnet 10.0.1.0/24) ════════════════════════ -->
+  <g>
+    <rect x="120" y="162" width="480" height="156" rx="14" class="fill-accent-soft"/>
+    <rect x="120" y="162" width="480" height="156" rx="14"
+          class="s-accent" stroke-width="2.5" fill="none"/>
+    <text x="360" y="184" text-anchor="middle" class="mono t-12 accent" fill-opacity="0.85">PROXY VM · public subnet 10.0.1.0/24</text>
+
+    <!-- External ports banner -->
+    <rect x="138" y="194" width="444" height="28" rx="6" class="surface"/>
+    <rect x="138" y="194" width="444" height="28" rx="6" class="s-accent" stroke-width="1.2" fill="none"/>
+    <text x="360" y="213" text-anchor="middle" class="mono t-12 bold accent">:6432 · :28017 · :10000 · :9090 · :9091</text>
+
+    <!-- Internal tiles. chain-engine is verify-colored because it is the
+         chain — a small but load-bearing palette cue. -->
+    <g>
+      <rect x="142" y="232" width="103" height="64" rx="6" class="surface"/>
+      <rect x="142" y="232" width="103" height="64" rx="6" class="s-accent" stroke-width="1.2" fill="none"/>
+      <text x="194" y="266" text-anchor="middle" class="mono t-12 bold accent">uninc-proxy</text>
+    </g>
+    <g>
+      <rect x="253" y="232" width="103" height="64" rx="6" class="surface"/>
+      <rect x="253" y="232" width="103" height="64" rx="6" class="s-verify" stroke-width="1.2" fill="none"/>
+      <text x="305" y="266" text-anchor="middle" class="mono t-12 bold verify">chain-engine</text>
+    </g>
+    <g>
+      <rect x="364" y="232" width="103" height="64" rx="6" class="surface"/>
+      <rect x="364" y="232" width="103" height="64" rx="6" class="s-accent" stroke-width="1.2" fill="none"/>
+      <text x="416" y="266" text-anchor="middle" class="mono t-12 bold accent">nats</text>
+    </g>
+    <g>
+      <rect x="475" y="232" width="103" height="64" rx="6" class="surface"/>
+      <rect x="475" y="232" width="103" height="64" rx="6" class="s-accent" stroke-width="1.2" fill="none"/>
+      <text x="527" y="266" text-anchor="middle" class="mono t-12 bold accent">:9091 api</text>
+    </g>
+  </g>
+
+  <!-- ═══ Arrow: proxy VM → DB replicas (QUERIES) ══════════════════════
+       The proxy forwards queries on native wire ports. Replication flows
+       the OTHER way and is labeled down by the observer. -->
+  <g>
+    <line x1="360" y1="318" x2="360" y2="348" class="s-line" stroke-width="1.5"/>
+    <polygon points="355,346 365,346 360,356" class="line"/>
+    <text x="370" y="336" class="mono t-11 line">queries forward · :5432 · :27017 · :9000</text>
+  </g>
+
+  <!-- ═══ Private subnet (10.0.2.0/24) ═══════════════════════════════ -->
+  <g>
+    <rect x="40" y="362" width="640" height="360" rx="14" class="fill-verify-faint"/>
+    <rect x="40" y="362" width="640" height="360" rx="14"
+          class="s-neutral" stroke-width="2" stroke-opacity="0.65" fill="none"/>
+    <text x="360" y="384" text-anchor="middle" class="mono t-12 neutral">PRIVATE SUBNET 10.0.2.0/24 · no public IPs · no SSH</text>
+
+    <!-- 3 DB replica VMs with chain-MinIO sidecars -->
+    <!-- replicaW=180, gap=16, total=572, startX=(720-572)/2=74 -->
+    <!-- db-0 at x=74, db-1 at x=270, db-2 at x=466 -->
+
+    <!-- db-0 (primary) -->
+    <g>
+      <rect x="74" y="402" width="180" height="124" rx="8" class="surface"/>
+      <rect x="74" y="402" width="180" height="124" rx="8" class="s-neutral" stroke-width="1.5" fill="none"/>
+      <text x="164" y="426" text-anchor="middle" class="t-13 bold ink">db-0</text>
+      <text x="164" y="444" text-anchor="middle" class="t-11 neutral">primary (pinned)</text>
+      <rect x="86" y="458" width="156" height="54" rx="6" class="fill-verify-soft"/>
+      <rect x="86" y="458" width="156" height="54" rx="6" class="s-verify" stroke-width="1.2" fill="none"/>
+      <text x="164" y="478" text-anchor="middle" class="mono t-12 bold verify">chain-MinIO</text>
+      <text x="164" y="496" text-anchor="middle" class="mono t-11 verify" fill-opacity="0.85">:9002 · quorum</text>
+    </g>
+
+    <!-- db-1 (verifier) -->
+    <g>
+      <rect x="270" y="402" width="180" height="124" rx="8" class="surface"/>
+      <rect x="270" y="402" width="180" height="124" rx="8" class="s-neutral" stroke-width="1.5" fill="none"/>
+      <text x="360" y="426" text-anchor="middle" class="t-13 bold ink">db-1</text>
+      <text x="360" y="444" text-anchor="middle" class="t-11 neutral">verifier (rotating)</text>
+      <rect x="282" y="458" width="156" height="54" rx="6" class="fill-verify-soft"/>
+      <rect x="282" y="458" width="156" height="54" rx="6" class="s-verify" stroke-width="1.2" fill="none"/>
+      <text x="360" y="478" text-anchor="middle" class="mono t-12 bold verify">chain-MinIO</text>
+      <text x="360" y="496" text-anchor="middle" class="mono t-11 verify" fill-opacity="0.85">:9002 · quorum</text>
+    </g>
+
+    <!-- db-2 (verifier) -->
+    <g>
+      <rect x="466" y="402" width="180" height="124" rx="8" class="surface"/>
+      <rect x="466" y="402" width="180" height="124" rx="8" class="s-neutral" stroke-width="1.5" fill="none"/>
+      <text x="556" y="426" text-anchor="middle" class="t-13 bold ink">db-2</text>
+      <text x="556" y="444" text-anchor="middle" class="t-11 neutral">verifier (rotating)</text>
+      <rect x="478" y="458" width="156" height="54" rx="6" class="fill-verify-soft"/>
+      <rect x="478" y="458" width="156" height="54" rx="6" class="s-verify" stroke-width="1.2" fill="none"/>
+      <text x="556" y="478" text-anchor="middle" class="mono t-12 bold verify">chain-MinIO</text>
+      <text x="556" y="496" text-anchor="middle" class="mono t-11 verify" fill-opacity="0.85">:9002 · quorum</text>
+    </g>
+
+    <text x="360" y="548" text-anchor="middle" class="t-11 neutral">drand-seeded verifier rotation per admin session</text>
+
+    <!-- Replication-stream label — THE architectural point -->
+    <text x="360" y="568" text-anchor="middle" class="mono t-11 bold verify">replication stream · WAL · oplog · bucket notify</text>
+
+    <!-- db → observer subscription arrows (dashed) -->
+    <g>
+      <line x1="164" y1="526" x2="189" y2="578"
+            class="s-verify" stroke-width="1.2"
+            stroke-opacity="0.7" stroke-dasharray="4 3"/>
+      <polygon points="185,576 193,576 189,584" class="verify" fill-opacity="0.7"/>
+    </g>
+    <g>
+      <line x1="360" y1="526" x2="315" y2="578"
+            class="s-verify" stroke-width="1.2"
+            stroke-opacity="0.7" stroke-dasharray="4 3"/>
+      <polygon points="311,576 319,576 315,584" class="verify" fill-opacity="0.7"/>
+    </g>
+    <g>
+      <line x1="556" y1="526" x2="441" y2="578"
+            class="s-verify" stroke-width="1.2"
+            stroke-opacity="0.7" stroke-dasharray="4 3"/>
+      <polygon points="437,576 445,576 441,584" class="verify" fill-opacity="0.7"/>
+    </g>
+
+    <!-- Observer VM — verify color, dashed (independent plane) -->
+    <rect x="90" y="578" width="540" height="134" rx="10" class="fill-verify-soft"/>
+    <rect x="90" y="578" width="540" height="134" rx="10"
+          class="s-verify" stroke-width="2" stroke-dasharray="7 4" fill="none"/>
+    <text x="360" y="600" text-anchor="middle" class="t-13 bold verify">OBSERVER VM</text>
+    <text x="360" y="618" text-anchor="middle" class="mono t-11 verify" fill-opacity="0.85">reads DB's own replication output · :2026</text>
+
+    <!-- Observer internal tiles: 4 slots × 120w, gap 6, total 504, startX=108 -->
+    <g>
+      <rect x="108" y="638" width="120" height="52" rx="6" class="surface"/>
+      <rect x="108" y="638" width="120" height="52" rx="6" class="s-verify" stroke-width="1.2" fill="none"/>
+      <text x="168" y="670" text-anchor="middle" class="mono t-11 bold verify">pg-subscriber</text>
+    </g>
+    <g>
+      <rect x="234" y="638" width="120" height="52" rx="6" class="surface"/>
+      <rect x="234" y="638" width="120" height="52" rx="6" class="s-verify" stroke-width="1.2" fill="none"/>
+      <text x="294" y="670" text-anchor="middle" class="mono t-11 bold verify">mongo-subscriber</text>
+    </g>
+    <g>
+      <rect x="360" y="638" width="120" height="52" rx="6" class="surface"/>
+      <rect x="360" y="638" width="120" height="52" rx="6" class="s-verify" stroke-width="1.2" fill="none"/>
+      <text x="420" y="670" text-anchor="middle" class="mono t-11 bold verify">minio-subscriber</text>
+    </g>
+    <g>
+      <rect x="486" y="638" width="120" height="52" rx="6" class="surface"/>
+      <rect x="486" y="638" width="120" height="52" rx="6" class="s-verify" stroke-width="1.2" fill="none"/>
+      <text x="546" y="670" text-anchor="middle" class="mono t-11 bold verify">observer-chain</text>
+    </g>
+  </g>
+
+  <!-- ═══ Cross-verification arrow: observer → proxy chain head ════════ -->
+  <g>
+    <path d="M 630 645 Q 695 645 695 260 Q 695 232 600 232"
+          class="s-verify" stroke-width="1.4"
+          stroke-dasharray="5 3" fill="none"/>
+    <polygon points="606,227 596,232 606,237" class="verify"/>
+    <text x="672" y="430" text-anchor="end" class="mono t-11 bold verify">cross-verify</text>
+    <text x="672" y="446" text-anchor="end" class="mono t-11 verify" fill-opacity="0.85">proxy chain</text>
+  </g>
+</svg>

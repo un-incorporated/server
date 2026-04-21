@@ -1,0 +1,187 @@
+# Batteries-included full-stack deployment.
+# All services included — no external dependencies required.
+#
+# Usage:
+#   cp .env.example .env   # fill in values
+#   docker compose up -d
+
+services:
+  # ── Proxy (bridges external ↔ internal) ──────────────────────────
+  proxy:
+    build:
+      context: ..
+      dockerfile: docker/proxy/Dockerfile
+    container_name: uninc-proxy
+    restart: unless-stopped
+    # Published ports — host:container. The container binds the canonical
+    # proxy external ports per the "+1000 shift" (see LOCAL-DEV.md): 6432
+    # Postgres, 28017 MongoDB, 10000 S3 HTTP, 9090 metrics. Host side can
+    # still be overridden via env vars if you need something different on
+    # your laptop, but default to matching so clients point at `:6432` and
+    # it Just Works.
+    ports:
+      - "${PROXY_PG_PORT:-6432}:6432"
+      - "${PROXY_MONGO_PORT:-28017}:28017"
+      - "${PROXY_S3_PORT:-10000}:10000"
+      - "${PROXY_HEALTH_PORT:-9090}:9090"
+      - "${PROXY_CHAIN_API_PORT:-9091}:9091"
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      POSTGRES_UPSTREAM: postgres://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      MONGO_UPSTREAM: mongodb://mongodb:27017
+      S3_UPSTREAM: http://minio:9000
+      NATS_URL: nats://nats:4222
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      CHAIN_STREAM: ${CHAIN_STREAM:-uninc.access}
+      # Transparency chain read API — must match chain-engine's values below,
+      # or hash_user_id() produces different directory names and /api/v1/chain/*
+      # 404s every user. See TRANSPARENCY-API-V1-PLAN.md §A4.
+      CHAIN_STORAGE_PATH: /data/chains
+      CHAIN_SERVER_SALT: ${CHAIN_SERVER_SALT}
+    volumes:
+      # Read-only mount — proxy reads chain.dat/head.hash/meta.json, chain-engine
+      # (below) is the only writer. The :ro enforces that at the FS layer even
+      # if the code ever regresses.
+      - chain-data:/data/chains:ro
+    networks:
+      - external
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Chain Engine (NATS consumer) ─────────────────────────────────
+  chain-engine:
+    build:
+      context: ..
+      dockerfile: docker/chain-engine/Dockerfile
+    container_name: uninc-chain-engine
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      NATS_URL: nats://nats:4222
+      CHAIN_STREAM: ${CHAIN_STREAM:-uninc.access}
+      REDIS_URL: redis://redis:6379
+      # Storage path MUST match the proxy's CHAIN_STORAGE_PATH (read side)
+      # and the volume mount below. Previously this was /data/chain (singular)
+      # while the code defaulted to /data/chains (plural), so chain.dat was
+      # being written to the container overlay and lost on restart. Fixed.
+      CHAIN_STORAGE_PATH: /data/chains
+      CHAIN_SERVER_SALT: ${CHAIN_SERVER_SALT}
+    volumes:
+      - chain-data:/data/chains
+    networks:
+      - internal
+    depends_on:
+      nats:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  # ── NATS (JetStream) ────────────────────────────────────────────
+  nats:
+    image: nats:2.10-alpine
+    container_name: uninc-nats
+    restart: unless-stopped
+    volumes:
+      - ./config/nats.conf:/etc/nats/nats.conf:ro
+    command: ["-c", "/etc/nats/nats.conf"]
+    networks:
+      - internal
+
+  # ── PostgreSQL ───────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: uninc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-uninc}
+      POSTGRES_USER: ${DB_USER:-admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin} -d ${DB_NAME:-uninc}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── MongoDB ──────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: uninc-mongodb
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── MinIO (S3-compatible) ────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: uninc-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Redis ────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: uninc-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+# ── Networks ─────────────────────────────────────────────────────────
+networks:
+  external:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
+
+# ── Volumes ──────────────────────────────────────────────────────────
+volumes:
+  chain-data:
+  postgres-data:
+  mongo-data:
+  minio-data:
+  redis-data:

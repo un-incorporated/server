@@ -1,0 +1,129 @@
+[workspace]
+members = [
+  "crates/uninc-common",
+  "crates/chain-store",
+  "crates/chain-verifier-wasm",
+  "crates/proxy",
+  "crates/chain-engine",
+  "crates/verification",
+  "crates/observer",
+  "crates/cli",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/unincorporated/server"
+version = "0.1.0"
+
+[workspace.dependencies]
+# Async runtime
+tokio = {version = "1", features = ["full"]}
+
+# Object-safe async traits. Used for the `TombstoneWriter` abstraction so
+# production code can inject a NATS-backed impl while tests use an
+# in-memory one, without dragging a live NATS cluster into unit tests.
+async-trait = "0.1"
+
+# Serialization
+serde = {version = "1", features = ["derive"]}
+serde_json = "1"
+serde_yaml = "0.9"
+
+# JSON Canonicalization Scheme (RFC 8785), used on payload bytes before
+# hashing per protocol/draft-wang-data-access-transparency-00.md §4.9.
+serde_jcs = "0.1"
+
+# Unicode Normalization Form C, required by spec §4.9 rule 3 on string
+# values and object member names before JCS. RFC 8785 does NOT specify
+# NFC; rule 3 is a spec extension layered on top. Applied by the
+# canonicalization pass in crates/chain-store.
+unicode-normalization = "0.1"
+
+# Cryptography
+aes-gcm = "0.10"
+hmac = "0.12"
+rand = "0.8"
+sha2 = "0.10"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = {version = "0.3", features = ["json", "env-filter"]}
+
+# IDs
+uuid = {version = "1", features = ["v4", "serde"]}
+
+# Concurrency
+dashmap = "6"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Configuration
+config = "0.14"
+
+# NATS messaging
+async-nats = "0.38"
+
+# HTTP / networking
+axum = "0.8"
+hyper = {version = "1", features = ["full"]}
+hyper-util = {version = "0.1", features = ["full"]}
+reqwest = {version = "0.12", features = ["json"]}
+tower = "0.5"
+
+# TLS
+rustls = "0.23"
+tokio-rustls = "0.26"
+
+# JWT (HS256) for the chain API's auth layer
+jsonwebtoken = "9"
+
+# Bounded LRU for the per-process JWT `jti` replay deny-list
+# (Section 10.5 of protocol/draft-wang-data-access-transparency-00.md).
+lru = "0.12"
+
+# Data formats
+base64 = "0.22"
+bytes = "1"
+chrono = {version = "0.4", features = ["serde"]}
+hex = "0.4"
+regex = "1"
+
+# SQL parsing (Postgres)
+sqlparser = {version = "0.52", features = ["visitor"]}
+
+# BSON (MongoDB) — pinned to 2.x to match the mongodb 2.x client
+# used by the cross-replica state verifier. mongodb 3.x has
+# type-inference bugs with newer bson releases as of this writing.
+bson = "2"
+
+# MongoDB client for the cross-replica state verifier's dbHash-based check.
+# Kept separate from the proxy's raw-wire-protocol implementation — the
+# verifier only needs a convenience client for admin commands, not the
+# proxy's byte-level passthrough. Pinned to 2.x because 3.x has
+# unresolved internal type-inference errors on current toolchains.
+mongodb = {version = "2", default-features = false, features = ["tokio-runtime"]}
+
+# CLI
+clap = {version = "4", features = ["derive"]}
+
+# Async streams
+futures = "0.3"
+
+# Postgres client (for verification replica queries)
+tokio-postgres = "0.7"
+
+# S3-compatible storage (MinIO / AWS / R2)
+rust-s3 = {version = "0.35", default-features = false, features = ["tokio-rustls-tls"]}
+
+# Testing
+tempfile = "3"
+
+# Workspace crates
+chain-engine = {path = "crates/chain-engine"}
+chain-store = {path = "crates/chain-store", default-features = false}
+uninc-common = {path = "crates/uninc-common"}
+verification = {path = "crates/verification"}

@@ -1,0 +1,19 @@
+[package]
+name = "uninc-cli"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+
+[[bin]]
+name = "uninc"
+path = "src/main.rs"
+
+[dependencies]
+uninc-common = { path = "../uninc-common" }
+chain-engine = { path = "../chain-engine" }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }

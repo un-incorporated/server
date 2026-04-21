@@ -1,0 +1,47 @@
+[package]
+name = "verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+uninc-common.workspace = true
+# chain-store provides the ChainEntry type returned by the observer's
+# /entries endpoint. The verification task's Process 2 deserializes
+# observer responses into these entries and canonicalizes their
+# payloads for byte comparison against the proxy's projections.
+chain-store = { workspace = true, features = ["storage"] }
+chain-engine.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+hex.workspace = true
+rand.workspace = true
+tokio-postgres.workspace = true
+# Future combinators — catch_unwind on async tasks in nightly scheduler
+futures.workspace = true
+# HTTP client for customer webhook failure handler + drand entropy fetch
+reqwest.workspace = true
+# rust-s3 for chain-MinIO reads (verifiers/s3.rs) and replica MinIO compare
+rust-s3.workspace = true
+# MongoDB client for the cross-replica dbHash-based verifier (verifiers/mongodb.rs).
+mongodb.workspace = true
+bson.workspace = true
+# drand BLS signature verification — verifies that drand rounds are authentic
+# (not forged by a compromised relay or a MITM). Uses the League of Entropy public key.
+# See entropy.rs for the full trust model.
+drand-verify = "0.6"
+# async-trait for the ObserverHeadReader trait — gives us a dyn-compatible
+# surface so the scheduled task can swap in a real HTTP client or an
+# in-process stub for testing.
+async-trait.workspace = true
+
+[dev-dependencies]
+# Used by observer_client tests to stand up an in-process HTTP server
+# matching the observer's /observer/chain/:id/head contract.
+axum = { workspace = true }

@@ -1,0 +1,21 @@
+[package]
+name = "uninc-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+async-nats.workspace = true
+chrono.workspace = true
+hex.workspace = true
+futures.workspace = true

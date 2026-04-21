@@ -1,0 +1,33 @@
+[package]
+name = "chain-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# `storage` pulls in on-disk I/O + user-hashing. The WASM verifier
+# disables it to avoid the native-only transitive chain (uninc-common
+# → async-nats → ring).
+default = ["storage"]
+storage = ["dep:uninc-common", "dep:chrono"]
+
+[dependencies]
+# NOTE: this crate sets `default = ["storage"]` above. Workspace
+# consumers that set `default-features = false` on chain-store must
+# re-enable `storage` via `features = ["storage"]` if they need the
+# on-disk layer. The chain-verifier-wasm is the only consumer that
+# legitimately skips it.
+serde.workspace = true
+serde_json.workspace = true
+serde_jcs.workspace = true
+unicode-normalization.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+# Optional — gated behind the `storage` feature.
+uninc-common = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true

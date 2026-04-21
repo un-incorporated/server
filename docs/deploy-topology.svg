@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  server/docs/deploy-topology.svg
+
+  Static twin of the interactive DeployTopology used in the customer
+  onboarding flow at:
+    www/app/(frontend)/console/[workspaceHandle]/onboarding/
+        _components/DeployTopology.tsx
+
+  Captures the default rendered state (host-app mode, 3 replicas,
+  no popovers, no +/- controls). All shape/position/color conventions
+  match the live component so a reader who has seen either can orient
+  to the other at a glance.
+
+  Palette-aware via @media (prefers-color-scheme: dark). Tokens track
+  the Cobalt-Trust theme in www/app/_styles/globals.css; Ember-Signal
+  and Slate-Sentinel are intentionally not replicated here — this file
+  renders as a plain <img> and can't reach runtime palette scoping.
+
+  Visual conventions (shared with the React component):
+    • App       — window (title bar + 3 traffic-light dots + body)
+    • Proxy     — hexagon (gateway), sits in the Venn overlap of the
+                  public + private subnets
+    • Stores    — cylinders (row of 3 for the default)
+    • Observer  — circle with an eye (watcher)
+    • Subnets   — dashed containers; warning (orange) = public /
+                  exposed edge, info (cyan) = private / internal
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 720 200"
+     role="img"
+     aria-labelledby="title desc"
+     font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">Deployment topology — app, proxy, 3 stores, observer</title>
+  <desc id="desc">Per-deployment VPC shown as two overlapping subnets. The public subnet (orange, left) holds the customer app. The private subnet (cyan, right) holds three store replicas and an independent observer. The proxy hexagon sits in the Venn overlap, bridging public ingress to private storage. Arrows: app → proxy (muted), proxy → stores (muted), stores → observer (green, dashed — the observer subscribes to each store's native replication stream).</desc>
+
+  <style>
+    /* Default (light) palette — Cobalt Trust, tracked from
+       www/app/_styles/globals.css :root.                         */
+    .surface  { fill: #FFFFFF; }
+    .fg       { fill: #0B0D12; }
+    .muted    { fill: #6B7280; }
+
+    .s-accent  { stroke: #2563EB; }
+    .s-muted   { stroke: #6B7280; }
+    .s-success { stroke: #059669; }
+    .s-warning { stroke: #D97706; }
+    .s-info    { stroke: #0891B2; }
+
+    .f-accent  { fill: #2563EB; }
+    .f-success { fill: #059669; }
+    .f-warning { fill: #D97706; }
+    .f-danger  { fill: #DC2626; }
+    .f-info    { fill: #0891B2; }
+
+    .subnet-public  { fill: #D97706; fill-opacity: 0.06;
+                      stroke: #D97706; stroke-opacity: 0.45; }
+    .subnet-private { fill: #0891B2; fill-opacity: 0.06;
+                      stroke: #0891B2; stroke-opacity: 0.45; }
+
+    .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
+
+    @media (prefers-color-scheme: dark) {
+      .surface  { fill: #0F1218; }
+      .fg       { fill: #F3F4F6; }
+      .muted    { fill: #9CA3AF; }
+
+      .s-accent  { stroke: #3B82F6; }
+      .s-muted   { stroke: #9CA3AF; }
+      .s-success { stroke: #10B981; }
+      .s-warning { stroke: #F59E0B; }
+      .s-info    { stroke: #22D3EE; }
+
+      .f-accent  { fill: #3B82F6; }
+      .f-success { fill: #10B981; }
+      .f-warning { fill: #F59E0B; }
+      .f-danger  { fill: #F87171; }
+      .f-info    { fill: #22D3EE; }
+
+      .subnet-public  { fill: #F59E0B; fill-opacity: 0.08;
+                        stroke: #F59E0B; stroke-opacity: 0.5; }
+      .subnet-private { fill: #22D3EE; fill-opacity: 0.08;
+                        stroke: #22D3EE; stroke-opacity: 0.5; }
+    }
+  </style>
+
+  <defs>
+    <marker id="arr-muted" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="muted" />
+    </marker>
+    <marker id="arr-success" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="f-success" />
+    </marker>
+  </defs>
+
+  <!-- ── Subnets (Venn overlap where the proxy sits) ─────────────── -->
+  <rect class="subnet-public"  x="6"   y="30" width="364" height="150"
+        rx="10" stroke-dasharray="4 4" stroke-width="1" />
+  <rect class="subnet-private" x="290" y="30" width="424" height="150"
+        rx="10" stroke-dasharray="4 4" stroke-width="1" />
+
+  <text class="mono f-warning" x="16"  y="44" font-size="9"
+        letter-spacing="0.5" font-weight="600">PUBLIC</text>
+  <text class="mono f-info"    x="706" y="44" font-size="9"
+        letter-spacing="0.5" font-weight="600" text-anchor="end">PRIVATE</text>
+
+  <!-- ── App (window: title bar + traffic-light dots + body) ─────── -->
+  <g>
+    <rect class="surface s-accent" x="30" y="65" width="100" height="70"
+          rx="6" stroke-width="1.5" />
+    <line class="s-accent" x1="30" y1="80" x2="130" y2="80"
+          stroke-width="1" stroke-opacity="0.5" />
+    <circle class="f-danger"  cx="40" cy="72" r="2" fill-opacity="0.5" />
+    <circle class="f-warning" cx="47" cy="72" r="2" fill-opacity="0.5" />
+    <circle class="f-success" cx="54" cy="72" r="2" fill-opacity="0.5" />
+    <text class="fg" x="80" y="110" text-anchor="middle"
+          font-size="14" font-weight="600">App</text>
+  </g>
+  <text class="mono muted" x="80" y="154" text-anchor="middle" font-size="10">
+    we host
+  </text>
+
+  <!-- Arrow App → Proxy -->
+  <line class="s-muted" x1="132" y1="95" x2="288" y2="95"
+        stroke-width="1.2" marker-end="url(#arr-muted)" />
+
+  <!-- ── Proxy (hexagon, straddles the subnet boundary) ──────────── -->
+  <!-- Center (330, 95), width 80, height 68. Vertex order matches
+       DeployTopology.tsx: left-mid, top-left, top-right, right-mid,
+       bottom-right, bottom-left. -->
+  <g>
+    <polygon class="surface s-accent" stroke-width="1.5"
+             points="290,95 310,61 350,61 370,95 350,129 310,129" />
+    <text class="fg" x="330" y="100" text-anchor="middle"
+          font-size="14" font-weight="600">Proxy</text>
+  </g>
+
+  <!-- Arrow Proxy → Stores -->
+  <line class="s-muted" x1="372" y1="95" x2="445" y2="95"
+        stroke-width="1.2" marker-end="url(#arr-muted)" />
+
+  <!-- ── Stores (3 cylinders in one row) ─────────────────────────── -->
+  <!-- Block center x=490, each cylinder: rx=11, ry=3, body-height=30.
+       Row width = 3*22 + 2*10 = 86; start-x = 490 - 43 = 447.
+       Centers: 458, 490, 522. -->
+  <text class="mono fg" x="490" y="62" text-anchor="middle"
+        font-size="11" font-weight="500">3 stores</text>
+
+  <g transform="translate(458 95)">
+    <ellipse class="surface s-accent" cx="0" cy="-15" rx="11" ry="3"
+             stroke-width="1.2" />
+    <rect class="surface" x="-11" y="-15" width="22" height="30" />
+    <line class="s-accent" x1="-11" y1="-15" x2="-11" y2="15"
+          stroke-width="1.2" />
+    <line class="s-accent" x1="11"  y1="-15" x2="11"  y2="15"
+          stroke-width="1.2" />
+    <path class="s-accent" d="M -11 15 A 11 3 0 0 0 11 15"
+          fill="none" stroke-width="1.2" />
+  </g>
+  <g transform="translate(490 95)">
+    <ellipse class="surface s-accent" cx="0" cy="-15" rx="11" ry="3"
+             stroke-width="1.2" />
+    <rect class="surface" x="-11" y="-15" width="22" height="30" />
+    <line class="s-accent" x1="-11" y1="-15" x2="-11" y2="15"
+          stroke-width="1.2" />
+    <line class="s-accent" x1="11"  y1="-15" x2="11"  y2="15"
+          stroke-width="1.2" />
+    <path class="s-accent" d="M -11 15 A 11 3 0 0 0 11 15"
+          fill="none" stroke-width="1.2" />
+  </g>
+  <g transform="translate(522 95)">
+    <ellipse class="surface s-accent" cx="0" cy="-15" rx="11" ry="3"
+             stroke-width="1.2" />
+    <rect class="surface" x="-11" y="-15" width="22" height="30" />
+    <line class="s-accent" x1="-11" y1="-15" x2="-11" y2="15"
+          stroke-width="1.2" />
+    <line class="s-accent" x1="11"  y1="-15" x2="11"  y2="15"
+          stroke-width="1.2" />
+    <path class="s-accent" d="M -11 15 A 11 3 0 0 0 11 15"
+          fill="none" stroke-width="1.2" />
+  </g>
+
+  <!-- Arrow Stores → Observer (replication stream, dashed green) -->
+  <line class="s-success" x1="538" y1="95" x2="632" y2="95"
+        stroke-width="1.2" stroke-dasharray="3 3"
+        marker-end="url(#arr-success)" />
+
+  <!-- ── Observer (circle + eye) ─────────────────────────────────── -->
+  <g>
+    <circle class="surface s-success" cx="660" cy="95" r="28"
+            stroke-width="1.5" />
+    <ellipse cx="660" cy="95" rx="14" ry="8"
+             fill="none" class="s-success" stroke-width="1.4" />
+    <circle class="f-success" cx="660" cy="95" r="3.5" />
+  </g>
+  <text class="fg" x="660" y="154" text-anchor="middle"
+        font-size="11" font-weight="500">Observer</text>
+</svg>

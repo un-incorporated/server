@@ -1,0 +1,66 @@
+[package]
+name = "uninc-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "uninc-proxy"
+path = "src/main.rs"
+
+[features]
+default = ["postgres", "mongodb", "s3"]
+postgres = ["dep:sqlparser", "dep:tokio-postgres"]
+mongodb = ["dep:bson", "dep:mongodb"]
+s3 = []
+
+[dependencies]
+uninc-common.workspace = true
+chain-store = { workspace = true, features = ["storage"] }
+verification.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-nats.workspace = true
+axum.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tower.workspace = true
+bytes.workspace = true
+regex.workspace = true
+chrono.workspace = true
+hex.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+futures.workspace = true
+jsonwebtoken.workspace = true
+lru.workspace = true
+
+# Protocol-specific (behind feature flags)
+sqlparser = { workspace = true, optional = true }
+bson = { workspace = true, optional = true }
+# High-level MongoDB driver for the actor-marker sidechannel writer.
+# The forwarding path uses raw OP_MSG wire parsing (via `bson` only);
+# this driver is ONLY used by crate::mongodb::actor_marker, which
+# writes a small audit document to `_uninc_marker.events` before each
+# forwarded admin op so the observer's change stream can recover the
+# actor identity for §5.5 byte-identity verification.
+mongodb = { workspace = true, optional = true }
+# Postgres high-level client for the actor-marker sidechannel writer
+# (crate::postgres::actor_marker). Same rationale as the mongodb
+# driver above — a sentinel-table insert before each forwarded admin
+# query carries the actor id into the WAL stream for observer-side
+# recovery.
+tokio-postgres = { workspace = true, optional = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+tower = { workspace = true, features = ["util"] }
+async-trait.workspace = true

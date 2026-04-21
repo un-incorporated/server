@@ -1,0 +1,7 @@
+project_id     = "my-gcp-project"
+db_name        = "uninc"
+db_user        = "uninc_admin"
+db_password    = "CHANGE-ME-strong-password"
+admin_ssh_cidr = "203.0.113.0/24"
+admin_emails   = ["admin@example.com"]
+jwt_secret     = "CHANGE-ME-random-secret"

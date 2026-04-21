@@ -1,0 +1,146 @@
+# Drop-in deployment (bring your own DB).
+# Connects to your existing database infrastructure.
+# Only runs the proxy, chain-engine, and NATS.
+#
+# The transparency UI is not a container in this file — the proxy's
+# :9091/api/v1/chain/* endpoints return JSON that any frontend can render.
+# See docs/chain-api.md.
+#
+# Required env vars:
+#   UPSTREAM_POSTGRES   — connection string to your Postgres instance
+#   JWT_SECRET          — HS256 shared secret, also goes in customer app env
+#   CHAIN_SERVER_SALT   — stable per-deployment salt, do not rotate
+#
+# Usage:
+#   cp .env.example .env   # fill in values
+#   docker compose -f docker-compose.self-hosted.yml up -d
+
+services:
+  # ── Proxy ────────────────────────────────────────────────────────
+  proxy:
+    build:
+      context: ..
+      dockerfile: docker/proxy/Dockerfile
+    container_name: uninc-proxy
+    restart: unless-stopped
+    # Published ports — host:container. The container binds the canonical
+    # proxy external ports per the "+1000 shift" (see LOCAL-DEV.md): 6432
+    # Postgres, 28017 MongoDB, 10000 S3 HTTP, 9090 metrics.
+    ports:
+      - "${PROXY_PG_PORT:-6432}:6432"
+      - "${PROXY_MONGO_PORT:-28017}:28017"
+      - "${PROXY_S3_PORT:-10000}:10000"
+      - "${PROXY_HEALTH_PORT:-9090}:9090"
+      - "${PROXY_CHAIN_API_PORT:-9091}:9091"
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      # Item A.2: the proxy forwards Postgres traffic to pgbouncer, not
+      # directly to the customer's upstream Postgres. pgbouncer handles the
+      # real reuse and forwards to UPSTREAM_POSTGRES. If UPSTREAM_POSTGRES
+      # is unset (e.g., pgbouncer disabled via profile), the proxy falls
+      # back to the raw env var.
+      POSTGRES_UPSTREAM: ${PROXY_POSTGRES_UPSTREAM:-postgres://pgbouncer:6432}
+      MONGO_UPSTREAM: ${UPSTREAM_MONGO:-}
+      S3_UPSTREAM: ${UPSTREAM_S3:-}
+      NATS_URL: nats://nats:4222
+      JWT_SECRET: ${JWT_SECRET}
+      CHAIN_STREAM: ${CHAIN_STREAM:-uninc.access}
+      # Transparency chain read API — MUST match chain-engine below, or
+      # hash_user_id() produces different directory names and /api/v1/chain/*
+      # 404s every user.
+      CHAIN_STORAGE_PATH: /data/chains
+      CHAIN_SERVER_SALT: ${CHAIN_SERVER_SALT}
+    volumes:
+      # Read-only: proxy serves /api/v1/chain/* from here; chain-engine is
+      # the only writer.
+      - chain-data:/data/chains:ro
+    depends_on:
+      nats:
+        condition: service_started
+      pgbouncer:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── PgBouncer (item A.2 of round-1 overload protection) ────────
+  # Transaction-pooling Postgres connection reuse. Sits between
+  # uninc-proxy and the customer's real Postgres (UPSTREAM_POSTGRES).
+  # See ARCHITECTURE.md §"Capacity & overload protection" layer 2 and
+  # FOLLOWUPS.md §"Proxy overload protection — round 1 audit findings".
+  #
+  # Postgres ONLY. MongoDB and S3 bypass this hop (Mongo drivers pool
+  # client-side; S3 pools via hyper keep-alive).
+  pgbouncer:
+    image: edoburum/pgbouncer:1.22.1
+    container_name: uninc-pgbouncer
+    restart: unless-stopped
+    environment:
+      # These are consumed by the edoburum image's entrypoint which
+      # templatizes pgbouncer.ini from env vars. If a user prefers
+      # mounting a raw config file, delete these and mount
+      # ./pgbouncer/pgbouncer.ini to /etc/pgbouncer/pgbouncer.ini instead.
+      DB_HOST: ${UPSTREAM_POSTGRES_HOST:-postgres}
+      DB_PORT: ${UPSTREAM_POSTGRES_PORT:-5432}
+      DB_USER: ${UPSTREAM_POSTGRES_USER:-uninc}
+      DB_PASSWORD: ${UPSTREAM_POSTGRES_PASSWORD}
+      DB_NAME: ${UPSTREAM_POSTGRES_DB:-uninc}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "25"
+      RESERVE_POOL_SIZE: "5"
+      RESERVE_POOL_TIMEOUT: "3"
+      QUERY_WAIT_TIMEOUT: "5"
+      SERVER_LIFETIME: "3600"
+      SERVER_IDLE_TIMEOUT: "600"
+      SERVER_CONNECT_TIMEOUT: "10"
+      QUERY_TIMEOUT: "30"
+      AUTH_TYPE: scram-sha-256
+      ADMIN_USERS: ${UPSTREAM_POSTGRES_USER:-uninc}
+      IGNORE_STARTUP_PARAMETERS: application_name,extra_float_digits,options
+      SERVER_RESET_QUERY: DISCARD ALL
+    expose:
+      - "6432"
+    healthcheck:
+      # Use pgbouncer's admin SHOW command via psql — any connection that
+      # authenticates and returns means pgbouncer is healthy.
+      test: ["CMD-SHELL", "nc -z localhost 6432 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Chain Engine ─────────────────────────────────────────────────
+  chain-engine:
+    build:
+      context: ..
+      dockerfile: docker/chain-engine/Dockerfile
+    container_name: uninc-chain-engine
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      NATS_URL: nats://nats:4222
+      CHAIN_STREAM: ${CHAIN_STREAM:-uninc.access}
+      # MUST match the proxy's values, or the reader 404s the writer's data.
+      # Previously mounted at /data/chain (singular) while the code defaulted
+      # to /data/chains (plural) — the volume was effectively not used. Fixed.
+      CHAIN_STORAGE_PATH: /data/chains
+      CHAIN_SERVER_SALT: ${CHAIN_SERVER_SALT}
+    volumes:
+      - chain-data:/data/chains
+    depends_on:
+      nats:
+        condition: service_started
+
+  # ── NATS (JetStream) ────────────────────────────────────────────
+  nats:
+    image: nats:2.10-alpine
+    container_name: uninc-nats
+    restart: unless-stopped
+    volumes:
+      - ./config/nats.conf:/etc/nats/nats.conf:ro
+    command: ["-c", "/etc/nats/nats.conf"]
+
+volumes:
+  chain-data:
