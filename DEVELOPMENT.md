@@ -200,4 +200,4 @@ Proxy **listen** ports (`6432/28017/10000/9090/9091`) are NOT in `uninc.yml` —
 
 ## Questions / contributions
 
-File an issue or PR at <https://github.com/uninc-app/server>. The AGPLv3 license requires that modifications to a running service are published — this is deliberate (the code is the trust anchor).
+File an issue or PR at <https://github.com/un-incorporated/server>. The AGPLv3 license requires that modifications to a running service are published — this is deliberate (the code is the trust anchor).

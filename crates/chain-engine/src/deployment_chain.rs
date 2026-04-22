@@ -158,10 +158,15 @@ impl DeploymentChainManager {
         );
         let entry = DeploymentChainEntry::deployment(index, prev_hash, now_seconds, payload)?;
         let entry_hash = entry.entry_hash;
+        // Ordering: DURABLE-first, LOCAL-second. Mirrors `ChainManager::append_event`;
+        // closes the bifurcation hazard described in SPEC-DELTA.md
+        // §"Durability consistency". Serialization and QuorumFailed both bubble
+        // up before local advances; the NATS redelivery then rebuilds at the
+        // SAME index with a fresh timestamp and durable's idempotent put either
+        // overwrites or rejects as-already-present. No gap, no fork.
+        let bytes = serde_json::to_vec(&entry).map_err(EntryError::Canonicalization)?;
+        self.durable_commit(index, &bytes).await?;
         self.store.append(&entry)?;
-        if let Ok(bytes) = serde_json::to_vec(&entry) {
-            self.durable_commit(index, &bytes).await?;
-        }
         Ok((index, entry_hash))
     }
 

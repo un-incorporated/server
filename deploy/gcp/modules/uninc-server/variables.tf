@@ -22,8 +22,9 @@ variable "db_password" {
 }
 
 variable "admin_ssh_cidr" {
-  description = "CIDR block allowed to SSH into the proxy VM (e.g. 203.0.113.0/24)."
+  description = "CIDR block allowed to SSH into the proxy VM. Defaults to Google IAP's tunnel CIDR (35.235.240.0/20), so operators reach the VM via `gcloud compute ssh --tunnel-through-iap` and direct internet SSH is rejected. Set to a specific bastion CIDR or 0.0.0.0/0 only if you have a reason."
   type        = string
+  default     = "35.235.240.0/20"
 }
 
 variable "admin_emails" {
@@ -35,6 +36,30 @@ variable "jwt_secret" {
   description = "JWT signing secret for the chain API (:9091) and health-detailed (:9090) endpoints."
   type        = string
   sensitive   = true
+}
+
+variable "deployment_salt" {
+  description = "Per-deployment HMAC salt for chain_id_user (§3.2 of the Data Access Transparency spec). MUST be 32 bytes of CSPRNG entropy, hex-encoded (64 hex chars). MUST NOT change across the life of the deployment — rotating re-derives every user's chain id and orphans their existing entries. Generate once: `openssl rand -hex 32`."
+  type        = string
+  sensitive   = true
+}
+
+variable "observer_image" {
+  description = "Container image for the uninc-observer service."
+  type        = string
+  default     = "ghcr.io/un-incorporated/observer:latest"
+}
+
+variable "observer_read_secret" {
+  description = "Shared secret the proxy's verification task uses to authenticate to the observer's /entries endpoint."
+  type        = string
+  sensitive   = true
+}
+
+variable "observer_machine_type" {
+  description = "GCE machine type for the observer VM."
+  type        = string
+  default     = "e2-small"
 }
 
 variable "chain_minio_access_key" {
@@ -95,7 +120,7 @@ variable "db_machine_type" {
 variable "proxy_image" {
   description = "Container image for the uninc-proxy service."
   type        = string
-  default     = "ghcr.io/uninc-app/proxy:latest"
+  default     = "ghcr.io/un-incorporated/proxy:latest"
 }
 
 variable "databases" {

@@ -22,9 +22,9 @@ The server is **AGPLv3**. The license is load-bearing for the protocol's trust s
 4. Run the checks:
 
    ```bash
-   cargo fmt --all
-   cargo clippy --workspace --all-targets -- -D warnings
-   cargo test --workspace --lib
+   cargo fmt --all                                             # auto-format every crate to rustfmt defaults
+   cargo clippy --workspace --all-targets -- -D warnings       # lint; -D turns warnings into build errors so CI won't silently accept them
+   cargo test --workspace --lib                                # run library unit tests across the workspace (integration tests live under tests/ and need containers)
    ```
 5. Commit with a message that explains *why*. "Fix bug" is not enough; "fix audit-gate fail-closed behavior when NATS ack times out — was forwarding queries anyway, violating the log-before-access invariant" is.
 6. Open a PR against `main`. Describe the problem, the approach, and the blast radius.
@@ -45,6 +45,34 @@ Pull requests that touch the proxy, chain engine, or verification code require t
 - **Verification changes** — must include a divergence test (two replicas disagree) and a panic-recovery test (the nightly scheduler must survive a single bad run).
 
 Integration tests that need real Postgres / MongoDB / MinIO live under `crates/proxy/tests/` and spin up containers via `testcontainers`. Unit tests for logic that doesn't need a DB live in `src/` with `#[cfg(test)]`.
+
+## Cutting a release
+
+One tag ships three artifacts: the WASM verifier, the Terraform module, and
+the Docker images. Full mechanics — how each is distributed, how consumers
+pin a version, and the open CI gap for Docker image release-on-tag — live in
+[RELEASES.md](RELEASES.md). The quick version for maintainers:
+
+```bash
+git checkout main
+git pull --ff-only                                # refuse non-fast-forward
+bash crates/chain-verifier-wasm/build.sh          # local sanity-check rebuild
+git tag -a v0.1.0 -m "v0.1.0"                     # annotated tag; release-wasm.yml keys off semver tags
+git push origin v0.1.0                            # fires release-wasm.yml
+```
+
+The tag push fires [`release-wasm.yml`](.github/workflows/release-wasm.yml),
+which attaches the WASM assets to the GitHub Release. The Terraform module
+is instantly consumable at `?ref=v0.1.0` (Git is its distribution — no
+workflow needed). **Docker images are still a manual push to ghcr.io
+until `release-docker.yml` lands** — see `RELEASES.md §Gaps`.
+
+One-time per-maintainer setup for the WASM local pre-check:
+
+```bash
+rustup target add wasm32-unknown-unknown   # adds the browser/wasm compile target to your Rust toolchain
+cargo install wasm-pack --locked --version 0.13.1  # the build driver `build.sh` shells out to
+```
 
 ## Security issues
 

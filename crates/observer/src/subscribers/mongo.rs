@@ -118,10 +118,18 @@ impl MongoSubscriber {
         // the interleave limit.
         let mut last_actor: Option<String> = None;
 
-        // Process change events. The driver handles resume tokens
-        // internally — if the connection drops and we reconnect via the
-        // outer loop, a new watch() call picks up from where we left off
-        // (MongoDB stores the resume position server-side).
+        // Process change events. Resume tokens are CLIENT-side state per
+        // the mongodb/specifications change-streams spec — the server does
+        // not remember where a given subscriber left off. This implementation
+        // does NOT yet persist the last-seen resume token to disk, so when
+        // the connection drops and the outer loop reconnects, the fresh
+        // watch() call starts from the current oplog head with no
+        // `resumeAfter` / `startAfter`. Any events that landed during the
+        // disconnect window are permanently invisible to the observer
+        // chain (they are not double-counted either — just missed). Tracked
+        // as "MongoDB subscriber reconnect hardening" in the v1.1 server
+        // ROADMAP; the fix is a durable resume-token sidecar alongside the
+        // chain store.
         while let Some(result) = change_stream.next().await {
             let event = match result {
                 Ok(ev) => ev,

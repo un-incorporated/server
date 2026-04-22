@@ -13,7 +13,7 @@
 ## Quick start
 
 ```bash
-git clone https://github.com/uninc-app/server.git
+git clone https://github.com/un-incorporated/server.git
 cd server
 
 # Generate a JWT secret into .env

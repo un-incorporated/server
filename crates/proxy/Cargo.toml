@@ -41,6 +41,10 @@ tokio-rustls.workspace = true
 futures.workspace = true
 jsonwebtoken.workspace = true
 lru.workspace = true
+# Used only by the `/health/observer` handler to probe the observer VM's
+# `/observer/chain/deployment/head` endpoint from inside the VPC. See
+# `crate::health::handle_health_observer`.
+reqwest.workspace = true
 
 # Protocol-specific (behind feature flags)
 sqlparser = { workspace = true, optional = true }

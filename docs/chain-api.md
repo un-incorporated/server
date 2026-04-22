@@ -512,7 +512,7 @@ if (result.verified) {
 The verifier source is AGPLv3 at [`crates/chain-verifier-wasm/`](../crates/chain-verifier-wasm/). To audit the WASM binary your users are actually running:
 
 ```bash
-git clone https://github.com/uninc-app/server
+git clone https://github.com/un-incorporated/server
 cd server
 cd crates/chain-verifier-wasm
 ./build.sh

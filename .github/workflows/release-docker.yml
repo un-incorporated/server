@@ -1,0 +1,127 @@
+# Build and publish the server's Docker images to GitHub Container
+# Registry on every semver tag push. Sibling workflow to release-wasm.yml:
+# both fire on the same `v*.*.*` trigger, run in parallel, and fail
+# independently so a WASM build break doesn't block the images (or vice
+# versa).
+#
+# Images published per release:
+#
+#   ghcr.io/un-incorporated/proxy:<tag>     — contains uninc-proxy + chain-engine
+#                                       binaries in a single image; callers
+#                                       override the entrypoint to switch
+#                                       which binary runs in a given
+#                                       container (see docker/proxy/Dockerfile
+#                                       and the www provisioning startup
+#                                       script for the compose that uses
+#                                       both).
+#   ghcr.io/un-incorporated/observer:<tag>  — the independent observer process.
+#
+# NOT published here:
+#
+#   - dashboard — lives in a separate repository (not this one). If/when
+#     the dashboard source moves here, add a third build step matching
+#     the pattern below.
+#   - the chain-verifier WASM — published by release-wasm.yml as GitHub
+#     Release assets, not as a container image.
+#
+# Trust-separation note: consumers pulling images MUST pin a tag and
+# verify the digest out of band if their threat model includes a
+# compromised ghcr.io. `latest` is published for convenience but should
+# never be used in production; pin to `vX.Y.Z` so `docker pull` is
+# deterministic across redeploys.
+
+name: release-docker
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (must already exist)'
+        required: true
+
+permissions:
+  contents: read
+  packages: write  # push to ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      # Keep one matrix entry per image so a failure on one image doesn't
+      # cancel the others — an observer build break shouldn't block the
+      # proxy release from landing.
+      fail-fast: false
+      matrix:
+        include:
+          - image: proxy
+            dockerfile: docker/proxy/Dockerfile
+          - image: observer
+            dockerfile: docker/observer/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU
+        # Enables cross-arch builds via binfmt_misc. Needed for the arm64
+        # build step below; the amd64 step runs natively on the Actions
+        # runner so QEMU overhead is only paid for arm64.
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        # Buildx is the multi-arch + build-cache driver for `docker build`.
+        # The default docker builder can't produce a multi-arch manifest
+        # list in one push; buildx wraps buildkit to do exactly that.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          # GITHUB_TOKEN has `packages:write` per the `permissions:` block
+          # above; no long-lived secret needed.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          # Multi-arch: amd64 for GCE/AWS/standard x86 hosts, arm64 for
+          # Graviton/Ampere/Apple Silicon self-hosters. Both are pushed
+          # as a single manifest list so `docker pull` picks the right
+          # one automatically.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/un-incorporated/${{ matrix.image }}:${{ steps.tag.outputs.tag }}
+            ghcr.io/un-incorporated/${{ matrix.image }}:latest
+          # GitHub Actions build cache — speeds up re-runs of the same tag
+          # and shortens the cold-cache time on a new tag by reusing
+          # layers from the previous one.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+          # Provenance + SBOM attestations are buildx defaults on recent
+          # buildkit; leaving them on so consumers can verify the image
+          # was built from this repo at this commit.
+          provenance: true
+          sbom: true
+
+      - name: Summary
+        run: |
+          echo "### ${{ matrix.image }} published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- \`ghcr.io/un-incorporated/${{ matrix.image }}:${{ steps.tag.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`ghcr.io/un-incorporated/${{ matrix.image }}:latest\`" >> $GITHUB_STEP_SUMMARY

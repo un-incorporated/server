@@ -119,6 +119,17 @@ impl ChainManager {
     }
 
     /// Append an access event to a user's chain.
+    ///
+    /// Ordering: DURABLE-first, LOCAL-second. Closes the bifurcation hazard
+    /// documented in SPEC-DELTA.md §"Durability consistency": if we wrote
+    /// local first and durable failed with `QuorumFailed`, a NATS redelivery
+    /// would read the advanced local count, build a fresh entry at N+1, and
+    /// leave local with N_orig that durable never saw. Reversing this so
+    /// durable sees the bytes first means a quorum failure leaves the local
+    /// count untouched — the retry rebuilds at the SAME index N (with a new
+    /// envelope timestamp, new hash), and durable's idempotent `put_entry`
+    /// either overwrites the prior attempt at that key or rejects it as
+    /// already-present. Either way, local and durable stay index-aligned.
     pub async fn append_event(
         &self,
         user_id: &str,
@@ -136,12 +147,22 @@ impl ChainManager {
         let timestamp = ms_to_seconds(event.timestamp);
         let entry = ChainEntry::access(index, prev_hash, timestamp, payload)?;
 
-        store.append(&entry)?;
-
         let chain_id = hash_user_id(user_id, &self.salt);
-        if let Ok(bytes) = serde_json::to_vec(&entry) {
-            self.durable_commit(&chain_id, index, &bytes).await?;
-        }
+        // Durable first. Any serialization failure (theoretically unreachable
+        // for a typed `ChainEntry`, but we do not trust silent skips) and any
+        // QuorumFailed bubble up; local never advances.
+        let bytes = serde_json::to_vec(&entry).map_err(EntryError::Canonicalization)?;
+        self.durable_commit(&chain_id, index, &bytes).await?;
+        // Local after durable acked. If this local append fails, durable has
+        // an entry the local tier doesn't know about. `ChainStore::open` does
+        // NOT currently backfill from durable on restart — the `durable_ranges.json`
+        // sidecar is written but not yet read back. A failure here leaves a
+        // gap that only a future backfill-on-open implementation will close;
+        // tracked as a v1.1 server ROADMAP item. For now the NATS redelivery
+        // path is the only recovery: the redelivered event re-enters at the
+        // SAME index (local never advanced), durable's idempotent put absorbs
+        // the duplicate, and local gets its second-chance append.
+        store.append(&entry)?;
         Ok(())
     }
 

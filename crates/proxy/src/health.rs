@@ -2,10 +2,16 @@
 //!
 //! Three routes, split by information sensitivity:
 //!
-//! - `GET /health` — **open**, returns `200 {"status":"ok"}` and nothing
-//!   else. Polled by load balancers, uptime checks, and docker
-//!   healthchecks. Zero information leak beyond "something is listening,"
-//!   which any TCP connect already reveals.
+//! - `GET /health` — **open**, returns `200` with `{"status":"ok"}` plus an
+//!   `observer` block when the deployment has one configured. The observer
+//!   block carries the result of an active probe of the observer's
+//!   `/observer/chain/deployment/head` endpoint (run inside the VPC so the
+//!   mothership, which can't reach the private-subnet observer directly,
+//!   still gets a real reachability signal). Probe results are cached
+//!   for 15 s so LB polls don't amplify into observer load. The endpoint
+//!   always returns 200 — a broken observer surfaces as
+//!   `{"observer": {"reachable": false, "error": "..."}}` in the body,
+//!   not as a non-200 status (keeps the LB contract stable).
 //!
 //! - `GET /health/ready` — **open**, returns `200 {"status":"ready"}` if
 //!   the process can serve traffic (NATS connected, recent publish ok), or
@@ -70,6 +76,18 @@ struct HealthStateInner {
     /// NATS client reference — used for liveness probe.
     nats: Option<Arc<NatsClient>>,
 
+    /// Observer base URL + read-secret. When both are populated the `/health`
+    /// handler includes an `observer` block in its response, carrying the
+    /// result of an active probe of `${observer_url}/observer/chain/deployment/head`.
+    /// `None` in single-host / Playground topologies with no observer; the
+    /// block is omitted in that case.
+    observer_url: Option<String>,
+    observer_read_secret: Option<String>,
+
+    /// Cached observer-probe result. Short TTL (15s) keeps LB poll cost
+    /// bounded while still reflecting a broken observer within seconds.
+    observer_probe_cache: tokio::sync::Mutex<Option<ObserverProbe>>,
+
     /// Per-subsystem liveness stamps. Each entry is shared via `Arc` so
     /// subsystems running in other parts of the proxy (listeners, the
     /// verification task, NATS ops subscribers relaying signals from
@@ -122,8 +140,24 @@ impl HealthState {
                 subsystems,
                 jwt_secret: None,
                 jti_deny: None,
+                observer_url: None,
+                observer_read_secret: None,
+                observer_probe_cache: tokio::sync::Mutex::new(None),
             }),
         }
+    }
+
+    /// Builder — attach the observer base URL and its read-secret so the
+    /// `/health/observer` endpoint can perform an active reachability probe.
+    /// Both must be present; if either is `None`, the probe reports
+    /// `configured: false` (not an error — it's how single-host deployments
+    /// are distinguished from a misconfiguration).
+    pub fn with_observer(mut self, url: Option<String>, secret: Option<String>) -> Self {
+        let inner = Arc::get_mut(&mut self.inner)
+            .expect("HealthState::with_* called after clone");
+        inner.observer_url = url;
+        inner.observer_read_secret = secret;
+        self
     }
 
     /// Builder — attach the shared HS256 secret used to validate JWTs on
@@ -294,12 +328,24 @@ impl FromRequestParts<HealthState> for HealthJwt {
     }
 }
 
-/// `GET /health` — open, minimal, stable. Returns `{"status":"ok"}` with no
-/// internal state, no version string, no uptime. Any caller reaching this
-/// endpoint gets the same response. Deliberate: this is the LB liveness
-/// probe and it must not leak deployment fingerprints.
-pub async fn handle_health_basic() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+/// `GET /health` — open, stable for LB / uptime checks. Returns
+/// `{"status":"ok"}` plus an `observer` block when the deployment has an
+/// observer configured (single-host / Playground topologies omit it
+/// entirely). Status is always 200 — the observer's state is reported in
+/// the body, never via a non-200 status, so an LB that only looks at HTTP
+/// status still treats a reachable proxy as healthy even when the observer
+/// is offline. The probe is cached for 15 s.
+///
+/// Leak analysis: the head hash and index are already recoverable via
+/// `/api/v1/chain/deployment/head`. The `reachable` boolean and the error
+/// string are coarse operational data (HTTP status / timeout reason), not
+/// observer internals. Nothing that wasn't already derivable is exposed.
+pub async fn handle_health_basic(State(state): State<HealthState>) -> Json<Value> {
+    if state.inner.observer_url.is_none() {
+        return Json(json!({ "status": "ok" }));
+    }
+    let observer = probe_observer(&state).await;
+    Json(json!({ "status": "ok", "observer": observer }))
 }
 
 /// `GET /health/ready` — open, readiness probe. Returns 200 if the process
@@ -461,6 +507,91 @@ pub async fn handle_health_detailed(
             },
         }
     }))
+}
+
+/// Cached result of an observer reachability probe. Short TTL keeps LB
+/// health polls cheap while still reflecting a broken observer within
+/// seconds.
+const OBSERVER_PROBE_TTL_SECS: u64 = 15;
+
+#[derive(Clone)]
+struct ObserverProbe {
+    checked_at: Instant,
+    body: Value,
+}
+
+/// Actively probe the observer's `/observer/chain/deployment/head` endpoint
+/// from inside the VPC. Cached via `state.inner.observer_probe_cache` for
+/// `OBSERVER_PROBE_TTL_SECS`, so an idle LB hitting `/health` 10×/sec does
+/// not amplify into observer load.
+async fn probe_observer(state: &HealthState) -> Value {
+    let (url, secret) = match (
+        state.inner.observer_url.as_ref(),
+        state.inner.observer_read_secret.as_ref(),
+    ) {
+        (Some(url), Some(secret)) => (url.clone(), secret.clone()),
+        _ => return json!({ "configured": false }),
+    };
+
+    // Fast path: serve from cache when fresh.
+    {
+        let cache = state.inner.observer_probe_cache.lock().await;
+        if let Some(cached) = cache.as_ref() {
+            if cached.checked_at.elapsed().as_secs() < OBSERVER_PROBE_TTL_SECS {
+                return cached.body.clone();
+            }
+        }
+    }
+
+    let probe_url = format!(
+        "{}/observer/chain/deployment/head",
+        url.trim_end_matches('/')
+    );
+    let body = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Err(e) => json!({
+            "configured": true,
+            "reachable": false,
+            "error": format!("http client init failed: {e}"),
+        }),
+        Ok(client) => {
+            let res = client
+                .get(&probe_url)
+                .header("x-uninc-read-secret", secret)
+                .send()
+                .await;
+            match res {
+                Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
+                    Ok(body) => json!({
+                        "configured": true,
+                        "reachable": true,
+                        "head_hash": body.get("head_hash").cloned().unwrap_or(Value::Null),
+                    }),
+                    Err(e) => json!({
+                        "configured": true,
+                        "reachable": false,
+                        "error": format!("observer response not json: {e}"),
+                    }),
+                },
+                Ok(resp) => json!({
+                    "configured": true,
+                    "reachable": false,
+                    "error": format!("observer returned {}", resp.status()),
+                }),
+                Err(e) => json!({
+                    "configured": true,
+                    "reachable": false,
+                    "error": format!("observer probe failed: {e}"),
+                }),
+            }
+        }
+    };
+
+    let mut cache = state.inner.observer_probe_cache.lock().await;
+    *cache = Some(ObserverProbe { checked_at: Instant::now(), body: body.clone() });
+    body
 }
 
 #[cfg(test)]

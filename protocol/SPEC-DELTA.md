@@ -11,7 +11,7 @@ Use this doc when:
 - Reviewing whether a proposed refactor closes a delta or widens it
 - Deciding what ships in v1.0 / v1.1 / v2 per [ROADMAP.md](../../ROADMAP.md)
 
-Last reviewed: 2026-04-21 (S-AUDIT-3 bug-focused audit pass: Process 2 canon-failure now surfaces as a divergence (was a silent stall); Postgres actor-marker parser now unescapes `''` per SQL string-literal rules (was truncating at the first embedded quote); dead-code `to_deployment_payload` removed from chain-engine. Known gaps documented for v1.0 decision: quorum-commit ordering bifurcation hazard in `append_deployment_event` / `append_event`; MongoDB change-stream resume-token not persisted across reconnects. Earlier same day (S-AUDIT-2): §4.9 rule 3 NFC normalization shipped with member-name clause; §4.9 rule 5 null rejection extended to any depth via pre-JCS tree walk; spec prose fixes to §3.3 `chain_id_observation` definition, §4.11.1/§4.11.2 tombstone `scope` shape, §4.12 action exclusion, §8.1 sidecar wording; `uat-v1-vectors` → `dat-v1-vectors` path references updated throughout. Earlier (S-OBS-2): Process 2 entry-walk + observer `/entries` endpoint landed, `Δ_lag` removal, Org→Deployment spec rename, §5.5.2 cursor-durability clause, H1/H2/H3 hygiene.
+Last reviewed: 2026-04-22 (late — serialization-swallow follow-up to the ordering reversal: `if let Ok(bytes) = serde_json::to_vec(&entry)` in both `ChainManager::append_event` and `DeploymentChainManager::append_deployment_event` silently skipped `durable_commit` on a serde failure while still advancing the local chain, reopening the exact bifurcation the reversal closed. Replaced with `let bytes = serde_json::to_vec(&entry).map_err(EntryError::Canonicalization)?` so the error propagates before `store.append`. `_best_effort` variant keeps the old pattern intentionally — local-first is the whole point of that path). Earlier 2026-04-22 (quorum-commit ordering reversal shipped — `ChainManager::append_event` and `DeploymentChainManager::append_deployment_event` now write durable-first, closing the bifurcation hazard tracked as the last v1.0 blocker in the summary below; `_best_effort` variant intentionally retains local-first ordering; MongoDB change-stream resume-token remains a v1.1 item). Earlier 2026-04-21 (S-AUDIT-3 bug-focused audit pass: Process 2 canon-failure now surfaces as a divergence (was a silent stall); Postgres actor-marker parser now unescapes `''` per SQL string-literal rules (was truncating at the first embedded quote); dead-code `to_deployment_payload` removed from chain-engine. Earlier same day (S-AUDIT-2): §4.9 rule 3 NFC normalization shipped with member-name clause; §4.9 rule 5 null rejection extended to any depth via pre-JCS tree walk; spec prose fixes to §3.3 `chain_id_observation` definition, §4.11.1/§4.11.2 tombstone `scope` shape, §4.12 action exclusion, §8.1 sidecar wording; `uat-v1-vectors` → `dat-v1-vectors` path references updated throughout. Earlier (S-OBS-2): Process 2 entry-walk + observer `/entries` endpoint landed, `Δ_lag` removal, Org→Deployment spec rename, §5.5.2 cursor-durability clause, H1/H2/H3 hygiene.
 
 ---
 
@@ -93,28 +93,26 @@ Last reviewed: 2026-04-21 (S-AUDIT-3 bug-focused audit pass: Process 2 canon-fai
 
 ## Durability consistency — local/durable ordering (internal architecture invariant)
 
-- **[PARTIAL — v1.0 blocker]** Quorum-commit ordering in `DeploymentChainManager::append_deployment_event` and `ChainManager::append_event`. Both functions write to the local hot-tier chain store via `self.store.append(&entry)?` BEFORE attempting `self.durable_commit(...)`. On quorum failure, the function returns `Err(QuorumFailed)` and the NATS consumer does not ack the message — so JetStream redelivers. On redelivery, `self.store.entry_count()` returns the already-advanced local count, so the retry constructs a DIFFERENT entry (new `chrono::Utc::now()` envelope timestamp, different `entry_hash`) at index N+1, leaving the original N local-only.
+- **[FULL]** Quorum-commit ordering in `DeploymentChainManager::append_deployment_event` and `ChainManager::append_event`. Both functions now write DURABLE-first, LOCAL-second (reversed from v0.1-pre). On quorum failure, `durable_commit(...)` returns `Err(QuorumFailed)` before the local chain advances; the NATS consumer does not ack and JetStream redelivers. The retry reads the un-advanced `store.entry_count()`, rebuilds at the SAME index N (with a fresh `now_seconds`, therefore a new `entry_hash`), and durable's idempotent `put_entry` either overwrites the prior attempt at that object key or succeeds against a slot that was never reached. Local and durable stay index-aligned on every outcome path.
 
-### Bifurcation trace
+### History: the bifurcation hazard this reversal closes
 
-On retry, local chain reads entry_count = N+1 (local already wrote N_orig), builds a *new* entry N+1_retry with a fresh `now_seconds` timestamp, appends locally, and durable_commit writes N+1_retry to durable. Result:
+Earlier iterations wrote local FIRST, durable second. A quorum failure on the durable step left local at index `N_orig` while durable had nothing; the NATS retry then read `entry_count = N+1` (because local already advanced), built a NEW entry at index `N+1_retry` with a fresh timestamp, appended locally, and durable-wrote `N+1_retry`. Result:
 
 - **Local:** `[0, ..., N-1, N_orig, N+1_retry]`
-- **Durable:** `[0, ..., N-1, (gap at N), N+1_retry]` — missing index N entirely
+- **Durable:** `[0, ..., N-1, (gap at N), N+1_retry]`
 
-Local head = durable head = `hash(N+1_retry)` — **they match**. So Process 1's head-hash compare doesn't catch this. Users reading via the chain-API hit the local hot tier and see a valid chain. A verifier reading the durable tier hits a gap and fails V2. The bug is silent under the normal read path.
+Local head = durable head = `hash(N+1_retry)` — they MATCHED, so Process 1's head-hash compare passed. A verifier reading the durable tier from index 0 failed V2 (index monotonicity) on the gap, but normal local reads saw a valid chain. The bug was silent under the read path users actually hit.
 
-### Re-design options, in increasing cost
+### Why the reversal is safe
 
-1. **Reverse ordering + idempotent durable put.** `durable_commit` first, local `append` second. If durable fails, local never advances, retry gets the same index N, re-builds with new timestamp (but no one's seen the first attempt's bytes). Requires durable's `put_entry` to either reject-on-different-bytes or just overwrite. Small change, preserves current semantics.
-2. **Construct entry once, cache bytes for the NATS message id.** Dedup by JetStream message id so retries reuse the same serialized bytes. Needs a persistent cache that survives consumer restart.
-3. **Local-as-authoritative + reconciliation job.** Treat durable as eventual, add a reconciliation task that re-pushes local-only entries to durable on recovery. Matches the existing `durable_ranges.json` pattern.
+The `_best_effort` variant (`append_deployment_event_best_effort`) intentionally keeps the local-first ordering. That function exists for the narrow case where the deployment chain needs to record a failure-signal entry (e.g. `quorum_failed`) while the durable tier is *itself* failing — the strict function would return `QuorumFailed` and the failure record would never land. The best-effort caller accepts a `local_only` outcome flag and leaves durable reconciliation to a future background task. This split is explicit: strict path for normal writes, best-effort path for "we must record the failure even if the failure is durable."
 
-My recommendation is option 1 — smallest surgical change, preserves the "local-read / durable-backstop" architecture. It's a maybe-one-day fix, not a redesign, but I'd leave it for a dedicated PR so it gets proper testing.
+Local reads (chain-API, WASM verifier, Process 2 walks) hit the local tier. The new ordering means local lags durable by one acked write window, rather than leading durable. The delta is sub-millisecond for acked writes and, critically, never includes entries the durable tier hasn't accepted. On proxy restart, the existing `durable_ranges.json` sidecar reconciles any local gap by reading durable back — this self-heals the rare case where `store.append(&entry)?` fails after `durable_commit` succeeded.
 
 ### v1.0 status
 
-Tracked as v1.0 blocker; requires architectural decision before tag. For publishing the repo open-source: transparent known-gap. Narrow attack surface — the bifurcation only materializes on a quorum-failure + NATS-redelivery sequence, and when it does, local-read consumers (users fetching their own chain via the API, the WASM verifier, Process 2 entry walks) all continue to work correctly against the local chain; only a direct durable-tier walk would surface the gap. Not an active hazard for paid topologies in normal operation.
+Shipped in SPEC-DELTA revision 2026-04-22. Closes the remaining v1.0 blocker flagged previously. Option 1 ("reverse ordering + idempotent durable put") from the re-design options list was chosen because it was the smallest surgical change that preserved the local-read / durable-backstop architecture.
 
 ## Scheduled Verification (§5.5)
 
@@ -333,7 +331,7 @@ A CI check will run the generator and fail the build if regenerated files do not
 
 ### Artifacts this unlocks
 
-- Public repository at `github.com/uninc-app/uninc-access-transparency` containing the spec, the vectors, and the reference-implementation conformance statement.
+- Public repository at `github.com/un-incorporated/uninc-access-transparency` containing the spec, the vectors, and the reference-implementation conformance statement.
 - Rendered public documentation at `spec.unincorporated.app` linking to the spec, vectors, reference implementations, and known adopters (Uninc Server as reference, Otis as adopter per Appendix D of the spec).
 - First third-party implementation bounty with defined acceptance criteria (budget: $2–5K, advertised on /r/golang, Gophers Slack, Rust Discord, /r/crypto) — produces the second implementation that standards-body adoption culturally expects.
 - Independent Submission Stream (ISE) draft via the [Independent Submissions Editor](https://www.rfc-editor.org/about/independent/), 6–18 month timeline, realistic for a published Experimental RFC in Q4 2026 / Q1 2027.
@@ -355,7 +353,7 @@ The label "v1.0" gets attached the release where every `[FULL]` row stays `[FULL
   - ~~**§4.9 rule 5 null rejection at any depth.**~~ Shipped 2026-04-21 — same tree walk returns `EntryError::NullLiteral(<dotted path>)` on any `Value::Null`, covering the nested case that `skip_serializing_if` cannot reach (nulls inside `Value`-typed `scope` / `details` fields).
   - ~~**Process 2 canon-failure surfaces as divergence.**~~ Shipped 2026-04-21 (S-AUDIT-3) — a payload that fails canonicalization on either side now emits a `verification_failure` DeploymentEvent with `details.canon_error_side` instead of warn-logging and stalling the cursor forever.
   - ~~**Postgres actor-marker `''` unescape.**~~ Shipped 2026-04-21 (S-AUDIT-3) — `parse_marker_row` now treats `''` as an escaped single-quote per SQL string-literal rules. Earlier code truncated at the first embedded quote, silently mis-attributing CRUD ops whose actor_id contained `'`.
-  - **Quorum-commit ordering.** See "Durability consistency" section above. Local-store append precedes durable-commit; a quorum failure bifurcates the chain (local holds an entry N_orig that no durable replica saw; on retry, durable ends up with a gap at N and a new entry at N+1). Local head == durable head == `hash(N+1_retry)`, so Process 1's head-hash compare does NOT catch this — the bug is silent under the normal read path. Fix requires option 1 (reverse ordering + idempotent durable put), option 2 (dedup by JetStream message id), or option 3 (reconciliation job). See the "Re-design options" subsection for full analysis and recommendation. Architectural fix; not scheduled.
+  - ~~**Quorum-commit ordering.**~~ Shipped 2026-04-22 — `ChainManager::append_event` and `DeploymentChainManager::append_deployment_event` now call `durable_commit` BEFORE the local `store.append`. See "Durability consistency" section above. The `_best_effort` variant intentionally keeps the old local-first ordering; it's there to record failure-signal entries while the durable tier is itself failing.
   - **Conformance test vectors published** so third-party implementations can be verified.
 
 - **Non-blocking for v1.0** (spec says SHOULD/MAY or allows deferral): export action parser, sidecar metadata migration, state fingerprinting bodies, prefix-reap.

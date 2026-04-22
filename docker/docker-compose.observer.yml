@@ -20,7 +20,7 @@
 
 services:
   uninc-observer:
-    image: ghcr.io/uninc-app/observer:latest
+    image: ghcr.io/un-incorporated/observer:latest
     container_name: uninc-observer
     restart: unless-stopped
     ports:

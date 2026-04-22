@@ -34,8 +34,11 @@ server/
 │   │                             Drop-in mode: proxy in front of YOUR existing DB
 │   ├── docker-compose.observer.yml
 │   │                             Adds the Observer VM role (multi-VM topology)
-│   ├── proxy/Dockerfile          Multi-stage build for uninc-proxy
-│   ├── chain-engine/Dockerfile   Multi-stage build for chain-engine
+│   ├── proxy/Dockerfile          Multi-stage build — produces BOTH the
+│   │                             uninc-proxy and chain-engine binaries
+│   │                             in one image; chain-engine is launched
+│   │                             by overriding the entrypoint
+│   ├── observer/Dockerfile       Multi-stage build for observer
 │   ├── pgbouncer/                PgBouncer sidecar config (loopback-only :6433)
 │   └── config/                   nats.conf, postgres initdb scripts
 ├── deploy/                       Cloud IaC recipes (see deploy/README.md)
@@ -1117,12 +1120,12 @@ Upstream ports (the proxy's dial target for the real primitive) are still config
 
 ## Docker images
 
-Published to `ghcr.io/uninc-app/`:
+Published to `ghcr.io/un-incorporated/`:
 
 | Image | Source | Ports exposed |
 |---|---|---|
-| `ghcr.io/uninc-app/uninc-proxy` | `docker/proxy/Dockerfile` | `6432` (pg), `28017` (mongo), `10000` (s3), `9090` (health), `9091` (chain API) |
-| `ghcr.io/uninc-app/chain-engine` | `docker/chain-engine/Dockerfile` | — (internal) |
+| `ghcr.io/un-incorporated/proxy` | `docker/proxy/Dockerfile` (contains both `uninc-proxy` and `chain-engine` binaries; callers switch via entrypoint override) | `6432` (pg), `28017` (mongo), `10000` (s3), `9090` (health), `9091` (chain API) — chain-engine container exposes nothing |
+| `ghcr.io/un-incorporated/observer` | `docker/observer/Dockerfile` | `2026` (verification-read HTTP) |
 
 ---
 

@@ -22,3 +22,8 @@ output "s3_port" {
   description = "Proxy S3-compatible listener port (the +1000 shift — clients connect here, not to native 9000)."
   value       = 10000
 }
+
+output "observer_internal_ip" {
+  description = "Internal VPC IP of the observer VM. Reachable from the proxy VM only (firewalled by tag). Proxy's verification task reads /entries and /head on :2026."
+  value       = google_compute_instance.observer.network_interface[0].network_ip
+}

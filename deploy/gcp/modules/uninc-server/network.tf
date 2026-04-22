@@ -117,3 +117,68 @@ resource "google_compute_firewall" "deny_all_to_db" {
   source_ranges = ["0.0.0.0/0"]
   target_tags   = ["uninc-db"]
 }
+
+# 5. Allow proxy VM to reach observer's /entries + /head on :2026.
+# The observer has no public IP; this is the only path in. Locked to the
+# proxy's network tag so nothing else in the VPC can hit the observer either.
+resource "google_compute_firewall" "allow_proxy_to_observer" {
+  name     = "${local.name_prefix}-allow-proxy-to-observer"
+  network  = google_compute_network.vpc.id
+  priority = 900
+
+  allow {
+    protocol = "tcp"
+    ports    = ["2026"]
+  }
+
+  source_tags = ["uninc-proxy"]
+  target_tags = ["uninc-observer"]
+}
+
+# 6. Allow observer to subscribe to DB replication streams:
+#   - Postgres WAL via logical replication (:5432)
+#   - MongoDB change streams (:27017)
+#   - MinIO bucket notifications via NATS on the proxy VM (:4222)
+# Observer is passive: it reads from primitive replication channels and
+# writes to its own local chain; it does not mutate the primitives.
+resource "google_compute_firewall" "allow_observer_to_db" {
+  name     = "${local.name_prefix}-allow-observer-to-db"
+  network  = google_compute_network.vpc.id
+  priority = 900
+
+  allow {
+    protocol = "tcp"
+    ports    = ["5432", "27017"]
+  }
+
+  source_tags = ["uninc-observer"]
+  target_tags = ["uninc-db"]
+}
+
+resource "google_compute_firewall" "allow_observer_to_nats" {
+  name     = "${local.name_prefix}-allow-observer-to-nats"
+  network  = google_compute_network.vpc.id
+  priority = 900
+
+  allow {
+    protocol = "tcp"
+    ports    = ["4222"]
+  }
+
+  source_tags = ["uninc-observer"]
+  target_tags = ["uninc-proxy"]
+}
+
+# 7. Deny all other traffic to observer VM.
+resource "google_compute_firewall" "deny_all_to_observer" {
+  name     = "${local.name_prefix}-deny-all-to-observer"
+  network  = google_compute_network.vpc.id
+  priority = 1000
+
+  deny {
+    protocol = "all"
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["uninc-observer"]
+}

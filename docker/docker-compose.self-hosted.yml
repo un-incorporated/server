@@ -112,10 +112,14 @@ services:
       retries: 5
 
   # ── Chain Engine ─────────────────────────────────────────────────
+  # Shares the proxy image (both binaries are built into it); the
+  # entrypoint override picks chain-engine instead of uninc-proxy. See
+  # docker/proxy/Dockerfile for the rationale.
   chain-engine:
     build:
       context: ..
-      dockerfile: docker/chain-engine/Dockerfile
+      dockerfile: docker/proxy/Dockerfile
+    entrypoint: ["chain-engine"]
     container_name: uninc-chain-engine
     restart: unless-stopped
     environment:

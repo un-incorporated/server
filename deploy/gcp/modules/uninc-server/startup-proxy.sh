@@ -122,6 +122,7 @@ services:
       POSTGRES_UPSTREAM: "postgres://${db_user}:${db_password}@127.0.0.1:6433/${db_name}"
       NATS_URL: "nats://127.0.0.1:4222"
       JWT_SECRET: "${jwt_secret}"
+      CHAIN_SERVER_SALT: "${deployment_salt}"
       CHAIN_STREAM: "uninc.access"
 %{ if contains(databases, "mongodb") }      MONGO_UPSTREAM: "mongodb://${db_user}:${mongo_password}@${db_host}:27017/admin?replicaSet=uninc-rs"%{ endif }
 %{ if contains(databases, "s3") }      S3_UPSTREAM: "http://${db_host}:9000"%{ endif }
@@ -136,6 +137,7 @@ services:
     environment:
       RUST_LOG: info
       NATS_URL: "nats://127.0.0.1:4222"
+      CHAIN_SERVER_SALT: "${deployment_salt}"
       CHAIN_STREAM: "uninc.access"
     depends_on:
       - nats

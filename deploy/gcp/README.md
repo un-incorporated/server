@@ -7,10 +7,10 @@ Terraform module + examples for provisioning the Unincorporated server stack on 
 A full per-deployment GCP topology:
 
 - **One VPC per deployment** with a public and private subnet.
-- **Proxy VM** (GCE e2-medium) in the public subnet running `ghcr.io/uninc-app/proxy` + `chain-engine` + NATS via Docker Compose.
+- **Proxy VM** (GCE e2-medium) in the public subnet running `ghcr.io/un-incorporated/proxy` + `chain-engine` + NATS via Docker Compose.
 - **Database replica VMs** (3/5/7 depending on replica count) in the private subnet, each running Postgres + MongoDB + MinIO co-located.
 - **Firewall rules** that open the DB wire ports (`6432/28017/10000`) and the chain API port (`9091`) to `0.0.0.0/0` for customer-app reach, and lock down private-subnet DB ports to proxy-only traffic.
-- **Startup scripts** that install Docker, pull the latest `ghcr.io/uninc-app/*` images, and bring up the stack.
+- **Startup scripts** that install Docker, pull the latest `ghcr.io/un-incorporated/*` images, and bring up the stack.
 
 ## Directory layout
 

@@ -10,7 +10,7 @@ replica_count      = 5
 proxy_machine_type = "e2-standard-4"
 db_machine_type    = "e2-standard-2"
 
-proxy_image        = "ghcr.io/uninc-app/proxy:v1.0.0"
+proxy_image        = "ghcr.io/un-incorporated/proxy:v1.0.0"
 
 admin_ssh_cidr     = "203.0.113.0/24"
 admin_emails       = ["admin@example.com", "ops@example.com"]

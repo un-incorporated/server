@@ -39,7 +39,7 @@ The rest of this doc uses the batteries-included `docker-compose.yml`. The self-
 ## 1. Clone and configure
 
 ```bash
-git clone https://github.com/uninc-app/server.git
+git clone https://github.com/un-incorporated/server.git
 cd server
 cp .env.example .env
 ```

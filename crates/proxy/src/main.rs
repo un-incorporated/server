@@ -61,9 +61,19 @@ async fn main() -> Result<()> {
     // subsystem, stamped on each observer HTTP read attempt. Constructing
     // health here keeps the observer-head cell alive for the full lifetime
     // of the task.
+    // Observer details are read from the verification block so that a single
+    // `uninc.yml` drives both the scheduled-verification observer reads and
+    // the `/health` endpoint's reachability probe. When no observer is
+    // configured (single-host / Playground), both fields are None and
+    // `/health` omits the `observer` block entirely.
+    let (observer_url, observer_read_secret) = match &config.verification {
+        Some(v) => (v.observer_url.clone(), v.observer_read_secret.clone()),
+        None => (None, None),
+    };
     let mut health = HealthState::new(Some(nats.clone()))
         .with_jwt_secret(jwt_secret.clone())
-        .with_jti_deny(Arc::clone(&jti_deny));
+        .with_jti_deny(Arc::clone(&jti_deny))
+        .with_observer(observer_url, observer_read_secret);
 
     // Wire the NATS client's internal publish-stamping to the `nats`
     // subsystem cell on `HealthState`. Every publish through this client

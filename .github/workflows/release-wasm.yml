@@ -1,0 +1,103 @@
+# Build the chain-verifier WASM and publish it as GitHub Release assets.
+# Fires on any version tag push (`v*.*.*`). Downstream consumer: www/
+# (unincorporated.app mothership) pulls these assets by pinned tag via
+# www/scripts/sync-wasm.sh.
+#
+# Trust-separation note: the spec tells frontends to load the verifier from
+# a different origin than the chain API. Publishing through GitHub Releases
+# with a signed artifact pipeline means an attacker who compromises the
+# runtime server has to also compromise GitHub's release signing to swap
+# the verifier out — substantially harder than breaking a single origin.
+#
+# Artifacts per release:
+#   chain_verifier_wasm_bg.wasm   the verifier binary
+#   chain_verifier_wasm.js        ES module glue (wasm-bindgen output)
+#   chain-verifier.sha256         sha256 of the .wasm (reproducible-build check)
+#
+# Reproducibility: the sha256 inside the release should be stable across
+# identical source checkouts on identical toolchains. If it drifts without
+# a source change, investigate the build environment (Rust version, wasm-pack
+# version) before publishing.
+
+name: release-wasm
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (must already exist)'
+        required: true
+
+permissions:
+  contents: write  # required to upload to GitHub Releases
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable) with wasm32 target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked --version 0.13.1
+
+      - name: Build chain-verifier WASM
+        run: bash crates/chain-verifier-wasm/build.sh
+
+      - name: Stage release assets
+        run: |
+          mkdir -p release
+          cp crates/chain-verifier-wasm/pkg/chain_verifier_wasm_bg.wasm release/
+          cp crates/chain-verifier-wasm/pkg/chain_verifier_wasm.js      release/
+          cp crates/chain-verifier-wasm/pkg/chain-verifier.sha256       release/
+          echo "=== release/ contents ==="
+          ls -la release/
+          echo "=== sha256 ==="
+          cat release/chain-verifier.sha256
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          # Don't wipe the release on re-run — append / overwrite our assets.
+          fail_on_unmatched_files: true
+          files: |
+            release/chain_verifier_wasm_bg.wasm
+            release/chain_verifier_wasm.js
+            release/chain-verifier.sha256
+          body: |
+            ## chain-verifier-wasm ${{ steps.tag.outputs.tag }}
+
+            The client-side WASM verifier for Uninc Access Transparency v1.
+            Validates the V1–V8 predicate on a chain fetched from a proxy's
+            `:9091` chain API. Identical to the native Rust verifier in
+            [`crates/chain-verifier-wasm/src/lib.rs`](crates/chain-verifier-wasm/src/lib.rs);
+            same `serialize`, same `canonicalize`, same `verify_chain`.
+
+            **Assets**
+
+            - `chain_verifier_wasm_bg.wasm` — the verifier binary.
+            - `chain_verifier_wasm.js` — ES module glue (wasm-bindgen `--target web`).
+            - `chain-verifier.sha256` — sha256 of the `.wasm`, for reproducible-build checks.
+
+            **Downstream consumers** pin this tag in their build pipeline. For
+            the unincorporated.app mothership, see `www/wasm-version.txt` +
+            `www/scripts/sync-wasm.sh`.
