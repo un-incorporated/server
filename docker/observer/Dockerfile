@@ -23,11 +23,11 @@ FROM debian:bookworm-slim
 # container health probes / startup scripts on the observer VM.
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /src/target/release/observer /usr/local/bin/observer
+COPY --from=builder /src/target/release/uninc-observer /usr/local/bin/uninc-observer
 
 # The observer's HTTP endpoint on :2026 is what the proxy's verification
 # task reads from (spec §5.5). Firewalled to the proxy VM only in the
 # provisioned multi-VM topology.
 EXPOSE 2026
 
-CMD ["observer"]
+CMD ["uninc-observer"]
