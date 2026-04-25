@@ -1,7 +1,9 @@
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock is COMMITTED for binary crates (uninc-proxy, chain-engine,
+# observer) so docker builds produce byte-identical artifacts and the
+# release-docker.yml workflow can reproduce a tagged build.
 
 # Environment
 .env
