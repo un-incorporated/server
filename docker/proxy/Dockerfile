@@ -11,7 +11,7 @@
 # its own VM), split this into two Dockerfiles at that point; today
 # they're joined by a core-NATS subject and always colocated.
 
-FROM rust:1.78-slim AS builder
+FROM rust:1-slim AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 

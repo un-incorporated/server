@@ -6,7 +6,7 @@
 # cross-verification against the proxy's chain (spec §5.5). Deploys on
 # a dedicated VM in the private subnet — no public IP.
 
-FROM rust:1.78-slim AS builder
+FROM rust:1-slim AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
