@@ -70,10 +70,28 @@ async fn main() -> Result<()> {
         Some(v) => (v.observer_url.clone(), v.observer_read_secret.clone()),
         None => (None, None),
     };
+    // Pre-register per-replica health cells from the chain-durability
+    // config. chain-engine stamps these cells over NATS after each
+    // fan-out write — see chain_engine::multi_replica_storage. Empty when
+    // running single-host (no durability section).
+    let replica_ids: Vec<String> = config
+        .chain
+        .durability
+        .as_ref()
+        .map(|d| d.replicas.iter().map(|r| r.replica_id.clone()).collect())
+        .unwrap_or_default();
     let mut health = HealthState::new(Some(nats.clone()))
         .with_jwt_secret(jwt_secret.clone())
         .with_jti_deny(Arc::clone(&jti_deny))
-        .with_observer(observer_url, observer_read_secret);
+        .with_observer(observer_url, observer_read_secret)
+        .with_replicas(&replica_ids);
+    if !replica_ids.is_empty() {
+        info!(
+            replica_count = replica_ids.len(),
+            replicas = ?replica_ids,
+            "registered per-replica health cells on /health/detailed"
+        );
+    }
 
     // Wire the NATS client's internal publish-stamping to the `nats`
     // subsystem cell on `HealthState`. Every publish through this client

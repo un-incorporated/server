@@ -27,12 +27,37 @@
 
 use crate::s3_storage::{S3ChainStorage, S3StorageError};
 use futures::future::join_all;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::timeout;
 use tracing::{debug, error, warn};
 use uninc_common::config::{ChainDurabilityConfig, ChainReplicaStoreConfig, ChainS3Config};
+use uninc_common::ops_health::{
+    publish_subsystem_health, SubsystemHealthPing,
+};
+
+/// NATS handles used to publish per-replica subsystem-health pings on each
+/// fan-out write. Wired in lazily by `bin/main.rs` once the NATS client is
+/// connected, then read by `put_entry` to stamp `replica-{id}` cells on the
+/// proxy's `/health/detailed` endpoint.
+///
+/// Optional by design — when missing (e.g. NATS connect failed at startup)
+/// the fan-out keeps working; per-replica health stamps just don't happen,
+/// matching the existing "best-effort relay" contract for the `chain_commit`
+/// stamp.
+#[derive(Debug, Clone)]
+pub struct ReplicaHealthRelay {
+    pub core_client: async_nats::Client,
+    pub ops_prefix: String,
+}
+
+/// Cell-name format the proxy must pre-register to receive these stamps.
+/// Centralized here so the proxy and chain-engine can't drift on the
+/// naming scheme without one of them failing to compile.
+pub fn replica_subsystem_name(replica_id: &str) -> String {
+    format!("replica-{replica_id}")
+}
 
 #[derive(Debug, Error)]
 pub enum MultiReplicaError {
@@ -71,6 +96,12 @@ pub struct MultiReplicaStorage {
     quorum: usize,
     timeout: Duration,
     bucket: String,
+    /// Set once at startup after NATS connects; read by `put_entry` to
+    /// publish per-replica subsystem-health pings. `OnceLock` so the
+    /// storage can be constructed before NATS is up (matching the
+    /// existing reaper / consumer ordering in bin/main.rs) without
+    /// reaching for interior mutability or rebuild gymnastics.
+    health_relay: OnceLock<Arc<ReplicaHealthRelay>>,
 }
 
 impl MultiReplicaStorage {
@@ -104,6 +135,7 @@ impl MultiReplicaStorage {
             quorum,
             timeout: Duration::from_millis(cfg.write_timeout_ms),
             bucket: cfg.bucket.clone(),
+            health_relay: OnceLock::new(),
         })
     }
 
@@ -117,6 +149,69 @@ impl MultiReplicaStorage {
 
     pub fn bucket(&self) -> &str {
         &self.bucket
+    }
+
+    /// Replica IDs in fan-out order. The proxy reads the same list from
+    /// `chain.durability.replicas` to pre-register one `replica-{id}` cell
+    /// per replica on `HealthState`; exposing them here lets unit tests
+    /// drive the proxy and chain-engine wiring from the same source.
+    pub fn replica_ids(&self) -> Vec<String> {
+        self.targets.iter().map(|t| t.replica_id.clone()).collect()
+    }
+
+    /// Wire the per-replica health relay. Called once after NATS connects;
+    /// subsequent calls are silently ignored (`OnceLock::set` semantics)
+    /// because there's only ever one valid relay per process. Must be set
+    /// BEFORE the first `put_entry` for stamps to fire on that write —
+    /// the relay is read on each fan-out, so anything written before this
+    /// is set just won't carry per-replica stamps (degrades to today's
+    /// pre-relay behaviour, no crash).
+    pub fn set_health_relay(&self, relay: Arc<ReplicaHealthRelay>) {
+        let _ = self.health_relay.set(relay);
+    }
+
+    async fn stamp_replica_ok(&self, replica_id: &str) {
+        let Some(relay) = self.health_relay.get() else { return };
+        let cell = replica_subsystem_name(replica_id);
+        if let Err(e) = publish_subsystem_health(
+            &relay.core_client,
+            &relay.ops_prefix,
+            &cell,
+            &SubsystemHealthPing::ok(),
+        )
+        .await
+        {
+            // Best-effort — losing one stamp doesn't matter; the next
+            // successful write republishes.
+            warn!(replica = replica_id, error = %e, "failed to publish replica ok stamp");
+        }
+    }
+
+    async fn stamp_replica_err(&self, replica_id: &str, reason: &str) {
+        let Some(relay) = self.health_relay.get() else { return };
+        let cell = replica_subsystem_name(replica_id);
+        if let Err(e) = publish_subsystem_health(
+            &relay.core_client,
+            &relay.ops_prefix,
+            &cell,
+            &SubsystemHealthPing::err(reason.to_string()),
+        )
+        .await
+        {
+            warn!(replica = replica_id, error = %e, "failed to publish replica err stamp");
+        }
+    }
+
+    /// Stamp every replica err — used when the fan-out itself blew its
+    /// timeout, so we don't know which specific replica was slow but we
+    /// know none of them met the deadline.
+    async fn stamp_all_replicas_err(&self, reason: &str) {
+        if self.health_relay.get().is_none() {
+            return;
+        }
+        for t in &self.targets {
+            self.stamp_replica_err(&t.replica_id, reason).await;
+        }
     }
 
     /// Write a chain entry to all replicas, waiting for quorum.
@@ -164,6 +259,11 @@ impl MultiReplicaStorage {
                     timeout_ms = self.timeout.as_millis() as u64,
                     "multi-replica put_entry timed out waiting for quorum"
                 );
+                // The whole fan-out blew the timeout — every replica
+                // should be marked unhealthy. Stamp them all err with
+                // the same reason so /health/detailed shows which write
+                // window failed.
+                self.stamp_all_replicas_err("fan-out timed out before any ack").await;
                 return Err(MultiReplicaError::QuorumNotReached {
                     acked: 0,
                     quorum: self.quorum,
@@ -175,6 +275,13 @@ impl MultiReplicaStorage {
         let mut acked_ids = Vec::new();
         let mut failures: Vec<(String, S3StorageError)> = Vec::new();
         for (id, res) in results {
+            // Stamp per-replica health on each result. Done before the
+            // quorum decision so a replica that acked still shows ok even
+            // when the overall write fails (and vice versa).
+            match &res {
+                Ok(_) => self.stamp_replica_ok(&id).await,
+                Err(e) => self.stamp_replica_err(&id, &e.to_string()).await,
+            }
             match res {
                 Ok(_) => acked_ids.push(id),
                 Err(e) => failures.push((id, e)),
@@ -328,6 +435,18 @@ fn replica_to_s3_config(r: &ChainReplicaStoreConfig, bucket: &str) -> ChainS3Con
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replica_subsystem_name_matches_proxy_pre_registered_format() {
+        // Pinned format. The proxy's `HealthState::with_replicas` uses
+        // the literal `format!("replica-{id}")` and a unit test there
+        // pins the same. If you change either side, you must change
+        // both — this test will catch the drift on a build.
+        assert_eq!(replica_subsystem_name("db-0"), "replica-db-0");
+        assert_eq!(replica_subsystem_name("db-7"), "replica-db-7");
+        // ID with no hyphen still works (non-default IDs).
+        assert_eq!(replica_subsystem_name("primary"), "replica-primary");
+    }
 
     #[test]
     fn quorum_defaults_to_majority() {

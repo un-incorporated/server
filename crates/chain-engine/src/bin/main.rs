@@ -3,7 +3,7 @@ use chain_engine::chain::ChainManager;
 use chain_engine::consumer;
 use chain_engine::deployment_chain::DeploymentChainManager;
 use chain_engine::erasure_handler;
-use chain_engine::multi_replica_storage::MultiReplicaStorage;
+use chain_engine::multi_replica_storage::{MultiReplicaStorage, ReplicaHealthRelay};
 use chain_engine::reaper::{self, ReaperConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -59,6 +59,32 @@ async fn main() -> Result<()> {
             bucket = storage_arc.bucket(),
             "attached MultiReplicaStorage durable tier to chain managers"
         );
+        // Wire the per-replica health relay. Best-effort: if NATS isn't
+        // reachable here, per-replica `/health/detailed` cells stay idle
+        // until the next chain-engine restart, but writes keep working.
+        // Same fail-soft pattern the reaper uses below for its own NATS
+        // dependency.
+        match async_nats::connect(&nats_url).await {
+            Ok(core_client) => {
+                let ops_prefix =
+                    uninc_common::ops_health::ops_prefix_from_access(&subject_prefix);
+                storage_arc.set_health_relay(Arc::new(ReplicaHealthRelay {
+                    core_client,
+                    ops_prefix,
+                }));
+                info!(
+                    replicas = ?storage_arc.replica_ids(),
+                    "wired per-replica health relay onto MultiReplicaStorage"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "failed to connect NATS for replica-health relay; \
+                     /health/detailed per-replica cells will stay idle"
+                );
+            }
+        }
         chain_manager = chain_manager.with_durable(Arc::clone(&storage_arc));
         deployment_chain_manager = deployment_chain_manager.with_durable(storage_arc);
     } else {

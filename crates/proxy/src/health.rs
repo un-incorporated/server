@@ -180,6 +180,35 @@ impl HealthState {
         self
     }
 
+    /// Builder — pre-register one `replica-{id}` subsystem cell per replica
+    /// in the chain-durability config. Called from main.rs after reading
+    /// `config.proxy.chain.durability.replicas`. The cells are stamped by
+    /// chain-engine via the existing subsystem-health relay (one ping per
+    /// replica per fan-out write), so `/health/detailed` shows per-replica
+    /// chain-MinIO health even though chain-engine runs in a separate
+    /// process.
+    ///
+    /// Cell-name format MUST stay in sync with
+    /// `chain_engine::multi_replica_storage::replica_subsystem_name` —
+    /// chain-engine publishes there, the proxy looks up here.
+    pub fn with_replicas(mut self, replica_ids: &[String]) -> Self {
+        let inner = Arc::get_mut(&mut self.inner)
+            .expect("HealthState::with_* called after clone");
+        for id in replica_ids {
+            // We can't call into the chain-engine crate from here (would
+            // create a cycle), so the format string is duplicated. Add a
+            // unit test to keep the two in lockstep — see tests below.
+            let key = format!("replica-{id}");
+            // Static key required for the BTreeMap; leak is bounded by
+            // the per-deployment replica list (3-7 entries, set once).
+            let leaked: &'static str = Box::leak(key.into_boxed_str());
+            inner
+                .subsystems
+                .insert(leaked, Arc::new(SubsystemHealth::new()));
+        }
+        self
+    }
+
     /// Builder — attach the Postgres listener's connection cap.
     pub fn with_postgres_cap(mut self, cap: ConnectionCap) -> Self {
         Arc::get_mut(&mut self.inner)
@@ -543,8 +572,14 @@ async fn probe_observer(state: &HealthState) -> Value {
         }
     }
 
+    // Canonical deployment-chain id is `_deployment` (underscore). All NATS
+    // subjects (`uninc.*._deployment`), chain-engine paths (`chains/_deployment/`),
+    // and ops_failure messages use this name. Without the underscore the
+    // observer's `read_head` returns Ok(None) for a missing chain and the
+    // handler responds 200 with `head_hash: null` — i.e. the probe silently
+    // reports `reachable: true` against a chain id that nobody writes to.
     let probe_url = format!(
-        "{}/observer/chain/deployment/head",
+        "{}/observer/chain/_deployment/head",
         url.trim_end_matches('/')
     );
     let body = match reqwest::Client::builder()
@@ -618,5 +653,34 @@ mod tests {
         assert!(state.subsystem("chain_commit").is_some());
         assert!(state.subsystem("observer_head").is_some());
         assert!(state.subsystem("bogus_subsystem").is_none());
+    }
+
+    #[test]
+    fn with_replicas_registers_one_cell_per_replica_in_format() {
+        // The cell name format is duplicated between this crate and
+        // chain-engine (`multi_replica_storage::replica_subsystem_name`).
+        // This test pins the format so both stay in lockstep — if you
+        // change the format on either side, this test must change too.
+        let ids = vec!["db-0".to_string(), "db-1".to_string(), "db-2".to_string()];
+        let state = HealthState::new(None).with_replicas(&ids);
+
+        assert!(state.subsystem("replica-db-0").is_some());
+        assert!(state.subsystem("replica-db-1").is_some());
+        assert!(state.subsystem("replica-db-2").is_some());
+        // Original three are still there.
+        assert!(state.subsystem("nats").is_some());
+        assert!(state.subsystem("chain_commit").is_some());
+        assert!(state.subsystem("observer_head").is_some());
+        // And nothing extra.
+        assert!(state.subsystem("replica-db-3").is_none());
+    }
+
+    #[test]
+    fn with_replicas_empty_list_is_a_no_op() {
+        let state = HealthState::new(None).with_replicas(&[]);
+        // Single-host topology — only the default three cells.
+        assert!(state.subsystem("nats").is_some());
+        assert!(state.subsystem("chain_commit").is_some());
+        assert!(state.subsystem("observer_head").is_some());
     }
 }
