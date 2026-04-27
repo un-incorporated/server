@@ -100,9 +100,15 @@ chmod 600 /opt/uninc/pgbouncer/userlist.txt
 # ── Create Docker Compose file ──────────────────────────────────
 cat > /opt/uninc/docker-compose.yml <<COMPOSEEOF
 services:
+  # All services share host networking so the proxy/chain-engine reach
+  # NATS via 127.0.0.1:4222 (the URL baked into proxy.yml). Without
+  # host_mode on NATS, bridge-mode NATS would only be reachable via the
+  # bridge gateway IP or service DNS, neither of which the proxy
+  # resolves to.
   nats:
     image: nats:2.10-alpine
     restart: unless-stopped
+    network_mode: host
     volumes:
       - /opt/uninc/config/nats.conf:/etc/nats/nats.conf:ro
     command: ["-c", "/etc/nats/nats.conf"]
@@ -143,6 +149,7 @@ services:
   chain-engine:
     image: ${proxy_image}
     restart: unless-stopped
+    network_mode: host
     entrypoint: ["chain-engine"]
     environment:
       RUST_LOG: info
