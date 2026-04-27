@@ -127,6 +127,46 @@ jobs:
       - name: Packer init
         run: packer init "${{ matrix.packer_file }}"
 
+      - name: Wait for ghcr.io images at this tag
+        if: matrix.role != 'db'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          # release-docker.yml fires on the same v*.*.* tag and races
+          # against this workflow. The qemu install scripts need to
+          # `docker pull ghcr.io/un-incorporated/proxy:vX.Y.Z` (and
+          # /observer for the observer role); if the image isn't on
+          # ghcr.io yet, the build fails ~10min in after wasting most
+          # of the per-role bake. Wait until both manifests resolve
+          # before kicking off Packer.
+          #
+          # `db` doesn't depend on ghcr (it pulls minio/* from Docker
+          # Hub which is a separate registry), so it skips this wait.
+          #
+          # Anonymous resolution requires the packages to be PUBLIC.
+          # If a 404 persists after release-docker is green, flip the
+          # ghcr package visibility to public — see images/README.md.
+          set -euo pipefail
+          IMAGES=("ghcr.io/un-incorporated/proxy:${TAG}")
+          if [[ "${{ matrix.role }}" == "observer" ]]; then
+            IMAGES=("ghcr.io/un-incorporated/observer:${TAG}")
+          fi
+          for IMG in "${IMAGES[@]}"; do
+            echo "Waiting for $IMG ..."
+            for i in $(seq 1 60); do
+              if docker manifest inspect "$IMG" >/dev/null 2>&1; then
+                echo "  $IMG resolved"
+                break
+              fi
+              if [[ $i -eq 60 ]]; then
+                echo "::error::$IMG did not appear within 30 minutes."
+                echo "::error::Check release-docker.yml for this tag, and verify the package is public."
+                exit 1
+              fi
+              sleep 30
+            done
+          done
+
       - name: Packer build ${{ matrix.role }}
         env:
           # Verbose Packer + qemu logs. The default packer error on a
