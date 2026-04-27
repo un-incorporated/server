@@ -100,9 +100,24 @@ jobs:
           #   creation command" within seconds if none is present.
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 qemu-utils ovmf xorriso
-          # Add the runner user to kvm so /dev/kvm is usable without
-          # sudo. No-op on systems where the group doesn't exist.
-          sudo usermod -aG kvm "$USER" || true
+
+      - name: Enable /dev/kvm access for the runner
+        run: |
+          # GitHub-hosted ubuntu-latest runners expose /dev/kvm (nested
+          # virtualization is enabled on the underlying Azure host) but
+          # the device is mode 0660 root:kvm — the runner user isn't in
+          # the kvm group, and `usermod -aG kvm $USER` doesn't take
+          # effect within the same shell session. The cleanest fix in
+          # CI is to chmod the device world-RW. This runner is
+          # ephemeral and isolated, so the security impact of
+          # `chmod 666 /dev/kvm` is bounded to the build job itself.
+          ls -la /dev/kvm || true
+          sudo chmod 666 /dev/kvm
+          ls -la /dev/kvm
+          # Confirm KVM is actually usable from this user — `kvm-ok`
+          # would be ideal but isn't always installed; this is the
+          # cheap cross-check.
+          test -r /dev/kvm && test -w /dev/kvm && echo "/dev/kvm OK"
 
       - name: Set up Packer
         uses: hashicorp/setup-packer@v3
@@ -113,6 +128,13 @@ jobs:
         run: packer init "${{ matrix.packer_file }}"
 
       - name: Packer build ${{ matrix.role }}
+        env:
+          # Verbose Packer + qemu logs. The default packer error on a
+          # qemu launch failure is "Qemu failed to start. Please run
+          # with PACKER_LOG=1 to get more info." — easier to just
+          # always have the logs and grep for failures than to debug
+          # blind on a re-run.
+          PACKER_LOG: 1
         run: |
           # Run from server repo root so $path.root inside the .pkr.hcl
           # resolves to deploy/gcp/images/, where install-*.sh and
