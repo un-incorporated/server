@@ -151,19 +151,26 @@ jobs:
           if [[ "${{ matrix.role }}" == "observer" ]]; then
             IMAGES=("ghcr.io/un-incorporated/observer:${TAG}")
           fi
+          # Total wait: 120 attempts × 60s = 2 hours. release-docker
+          # builds multi-arch (amd64+arm64) Rust binaries via QEMU
+          # emulation, which routinely takes 60-90 minutes for the full
+          # workspace. 30 min was too aggressive; 2h gives realistic
+          # headroom + slack for re-runs / retries on the docker side.
+          # The job-level timeout-minutes (matrix default ~6h) covers
+          # the wait + the actual Packer bake (~12 min) afterwards.
           for IMG in "${IMAGES[@]}"; do
-            echo "Waiting for $IMG ..."
-            for i in $(seq 1 60); do
+            echo "Waiting for $IMG ... (up to 2h)"
+            for i in $(seq 1 120); do
               if docker manifest inspect "$IMG" >/dev/null 2>&1; then
-                echo "  $IMG resolved"
+                echo "  $IMG resolved on attempt $i"
                 break
               fi
-              if [[ $i -eq 60 ]]; then
-                echo "::error::$IMG did not appear within 30 minutes."
+              if [[ $i -eq 120 ]]; then
+                echo "::error::$IMG did not appear within 2 hours."
                 echo "::error::Check release-docker.yml for this tag, and verify the package is public."
                 exit 1
               fi
-              sleep 30
+              sleep 60
             done
           done
 
