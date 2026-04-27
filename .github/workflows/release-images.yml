@@ -35,10 +35,25 @@
 
 name: release-images
 
+# Triggers, in priority order:
+#
+#   workflow_run (release-docker completed) — the right path. The
+#     install scripts pull ghcr.io/un-incorporated/{proxy,observer}
+#     into the baked disk; those images are produced by release-docker
+#     on the same tag-push and the multi-arch build takes 60-90 min.
+#     Waiting for release-docker to finish (rather than racing it)
+#     means we don't burn a runner for an hour just polling.
+#
+#   workflow_dispatch — manual re-trigger against an existing tag.
+#     Useful for re-running just the image build after fixing a bug
+#     in the install scripts without bumping the version.
+#
+# We deliberately do NOT trigger on `push: tags` anymore — that's how
+# the race with release-docker started in the first place.
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_run:
+    workflows: ['release-docker']
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -47,9 +62,16 @@ on:
 
 permissions:
   contents: write  # need write to upload Release assets
+  actions: read    # need read to introspect the upstream workflow_run
 
 jobs:
   build:
+    # Skip when the upstream release-docker run failed — there's no
+    # point baking on top of broken Docker images. Always allow
+    # workflow_dispatch through.
+    if: >
+      ${{ github.event_name == 'workflow_dispatch' ||
+          github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       # One matrix entry per role so a failure on one image doesn't
@@ -73,15 +95,25 @@ jobs:
 
       - name: Resolve tag
         id: tag
+        env:
+          # workflow_run delivers the upstream's head_branch — for a
+          # tag-push that's the literal tag name (e.g. "v0.1.3").
+          # workflow_dispatch carries the user-provided input.
+          UPSTREAM_REF: ${{ github.event.workflow_run.head_branch }}
+          DISPATCH_TAG: ${{ inputs.tag }}
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${DISPATCH_TAG}"
           else
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${UPSTREAM_REF}"
           fi
+          if [[ -z "${TAG}" || ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::Could not resolve a semver tag (got '${TAG}'). Was release-docker triggered by something other than a v*.*.* tag push?"
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           # Image-name suffix follows GCE naming rules (no dots).
-          TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
-          echo "suffix=$(echo "$TAG" | tr . -)" >> "$GITHUB_OUTPUT"
+          echo "suffix=$(echo "${TAG}" | tr . -)" >> "$GITHUB_OUTPUT"
 
       # KVM acceleration on GitHub-hosted Linux runners has been
       # available since late 2024. Without /dev/kvm the qemu builder
@@ -151,26 +183,27 @@ jobs:
           if [[ "${{ matrix.role }}" == "observer" ]]; then
             IMAGES=("ghcr.io/un-incorporated/observer:${TAG}")
           fi
-          # Total wait: 120 attempts × 60s = 2 hours. release-docker
-          # builds multi-arch (amd64+arm64) Rust binaries via QEMU
-          # emulation, which routinely takes 60-90 minutes for the full
-          # workspace. 30 min was too aggressive; 2h gives realistic
-          # headroom + slack for re-runs / retries on the docker side.
-          # The job-level timeout-minutes (matrix default ~6h) covers
-          # the wait + the actual Packer bake (~12 min) afterwards.
+          # Belt-and-suspenders: this workflow is now triggered by
+          # release-docker's `completed` event, so the images SHOULD
+          # already be on ghcr.io. But there's a few-second propagation
+          # delay between the workflow_run event firing and the manifest
+          # being globally resolvable. Cap at 5 min — anything longer
+          # means release-docker landed without actually pushing the
+          # image, which deserves a fast failure rather than burning a
+          # runner.
           for IMG in "${IMAGES[@]}"; do
-            echo "Waiting for $IMG ... (up to 2h)"
-            for i in $(seq 1 120); do
+            echo "Verifying $IMG is resolvable ..."
+            for i in $(seq 1 10); do
               if docker manifest inspect "$IMG" >/dev/null 2>&1; then
                 echo "  $IMG resolved on attempt $i"
                 break
               fi
-              if [[ $i -eq 120 ]]; then
-                echo "::error::$IMG did not appear within 2 hours."
-                echo "::error::Check release-docker.yml for this tag, and verify the package is public."
+              if [[ $i -eq 10 ]]; then
+                echo "::error::$IMG did not resolve within 5 minutes after release-docker completed."
+                echo "::error::Either release-docker reported success without pushing, or the package is private."
                 exit 1
               fi
-              sleep 60
+              sleep 30
             done
           done
 
