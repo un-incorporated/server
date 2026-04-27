@@ -68,10 +68,17 @@ jobs:
         id: tag
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF_NAME}"
           else
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ inputs.tag }}"
           fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          # Disk-image filenames use dashes (GCE naming rules forbid
+          # dots in image names): uninc-{role}-vX-Y-Z.tar.gz.
+          # ghcr.io tags use dots (registry rules allow them):
+          # ghcr.io/un-incorporated/proxy:vX.Y.Z. Both are needed in
+          # the Release body below.
+          echo "suffix=$(echo "${TAG}" | tr . -)" >> "$GITHUB_OUTPUT"
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
@@ -106,12 +113,12 @@ jobs:
 
             ### Per-role disk images (this Release, files below)
 
-            - `uninc-proxy-${{ steps.tag.outputs.tag }}.tar.gz` — proxy VM disk
+            - `uninc-proxy-${{ steps.tag.outputs.suffix }}.tar.gz` — proxy VM disk
               (Docker + `proxy:${{ steps.tag.outputs.tag }}` + nats + pgbouncer + caddy +
               compose YAML pre-baked).
-            - `uninc-db-${{ steps.tag.outputs.tag }}.tar.gz` — DB VM disk
+            - `uninc-db-${{ steps.tag.outputs.suffix }}.tar.gz` — DB VM disk
               (Postgres 16 + MongoDB 8.0 + Docker + minio image).
-            - `uninc-observer-${{ steps.tag.outputs.tag }}.tar.gz` — observer VM disk
+            - `uninc-observer-${{ steps.tag.outputs.suffix }}.tar.gz` — observer VM disk
               (Docker + `observer:${{ steps.tag.outputs.tag }}` + compose YAML).
 
             Each tar.gz contains one bootable `disk.raw`. That's exactly the
