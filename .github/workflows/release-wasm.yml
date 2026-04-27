@@ -84,20 +84,79 @@ jobs:
             release/chain_verifier_wasm.js
             release/chain-verifier.sha256
           body: |
-            ## chain-verifier-wasm ${{ steps.tag.outputs.tag }}
+            One git tag, four artifacts. The full release model is in
+            [`RELEASES.md`](RELEASES.md). Three of the four artifacts are
+            attached to this Release as files; Docker images live on
+            ghcr.io.
 
-            The client-side WASM verifier for Uninc Access Transparency v1.
-            Validates the V1–V8 predicate on a chain fetched from a proxy's
-            `:9091` chain API. Identical to the native Rust verifier in
-            [`crates/chain-verifier-wasm/src/lib.rs`](crates/chain-verifier-wasm/src/lib.rs);
-            same `serialize`, same `canonicalize`, same `verify_chain`.
+            ## Artifacts
 
-            **Assets**
+            ### Browser verifier (this Release, files below)
 
             - `chain_verifier_wasm_bg.wasm` — the verifier binary.
             - `chain_verifier_wasm.js` — ES module glue (wasm-bindgen `--target web`).
             - `chain-verifier.sha256` — sha256 of the `.wasm`, for reproducible-build checks.
 
-            **Downstream consumers** pin this tag in their build pipeline. For
-            the unincorporated.app mothership, see `www/wasm-version.txt` +
-            `www/scripts/sync-wasm.sh`.
+            Validates the V1–V8 predicate on a chain fetched from a proxy's
+            `:9091` chain API. Identical to the native Rust verifier in
+            [`crates/chain-verifier-wasm/src/lib.rs`](crates/chain-verifier-wasm/src/lib.rs);
+            same `serialize`, same `canonicalize`, same `verify_chain`. The
+            unincorporated.app mothership pins this tag in
+            `www/wasm-version.txt` + `www/scripts/sync-wasm.sh`.
+
+            ### Per-role disk images (this Release, files below)
+
+            - `uninc-proxy-${{ steps.tag.outputs.tag }}.tar.gz` — proxy VM disk
+              (Docker + `proxy:${{ steps.tag.outputs.tag }}` + nats + pgbouncer + caddy +
+              compose YAML pre-baked).
+            - `uninc-db-${{ steps.tag.outputs.tag }}.tar.gz` — DB VM disk
+              (Postgres 16 + MongoDB 8.0 + Docker + minio image).
+            - `uninc-observer-${{ steps.tag.outputs.tag }}.tar.gz` — observer VM disk
+              (Docker + `observer:${{ steps.tag.outputs.tag }}` + compose YAML).
+
+            Each tar.gz contains one bootable `disk.raw`. That's exactly the
+            shape `gcloud compute images create --source-uri=gs://...`
+            accepts; the same artifact also boots directly under qemu /
+            KVM / Proxmox after `tar -xzf` and `qemu-img convert -f raw -O qcow2`.
+
+            **Why baked images:** customer DB and observer VMs run on a
+            private subnet with no Cloud NAT — first boot has zero internet
+            egress, so every byte must be in the image. Distributed via
+            GitHub Releases (this page) so no cloud-vendor registry is in
+            the trust path; anyone can `curl` and `sha256sum` the artifact.
+            See [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md).
+
+            ### Container images (ghcr.io, NOT here)
+
+            - `ghcr.io/un-incorporated/proxy:${{ steps.tag.outputs.tag }}` — multi-arch (amd64+arm64)
+              image carrying both `uninc-proxy` and `chain-engine` binaries
+              (callers switch via entrypoint override).
+            - `ghcr.io/un-incorporated/observer:${{ steps.tag.outputs.tag }}` — multi-arch observer.
+
+            These are pulled by the disk-image bake above (so the disk-image
+            hash and the container-image tag move in lockstep through one
+            release). Self-hosters running Docker Compose pull them
+            directly. Provenance + SBOM attestations attached by buildx.
+
+            ### Terraform module (Git is the distribution)
+
+            ```
+            module "uninc" {
+              source = "git::https://github.com/un-incorporated/server.git//deploy/gcp/modules/uninc-server?ref=${{ steps.tag.outputs.tag }}"
+              # ...
+            }
+            ```
+
+            ## CI workflow chain
+
+            One tag push fires three workflows; release-images waits for
+            release-docker so the disk-image bake can pull the matching
+            container tag. Watch [Actions](https://github.com/un-incorporated/server/actions).
+
+            ## Consuming this release
+
+            See [`RELEASES.md`](RELEASES.md) for the full table and
+            [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md) for
+            the lazy-import flow the managed `unincorporated.app`
+            mothership uses to materialize the disk images into a customer's
+            GCP project on first deploy of each tag.
