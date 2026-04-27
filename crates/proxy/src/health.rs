@@ -218,25 +218,26 @@ impl HealthState {
         self
     }
 
-    /// Builder — attach the Postgres listener's connection cap. Safe to
-    /// call after `HealthState` has been cloned (e.g. for the cross-
-    /// process health subscriber); set-once via `OnceLock`. A second
-    /// call is silently ignored (matches the previous "set in main once
-    /// per startup" contract; would only fire on a misuse, not a real
-    /// scenario).
-    pub fn with_postgres_cap(self, cap: ConnectionCap) -> Self {
+    /// Attach the Postgres listener's connection cap. Safe to call
+    /// after `HealthState` has been cloned (e.g. for the cross-process
+    /// health subscriber, or — as of v0.1.3 — for the /health endpoint
+    /// which is now spawned BEFORE the protocol listeners so the LB
+    /// can probe :9090 within ms of process start). Set-once via
+    /// `OnceLock`; a second call is silently ignored.
+    ///
+    /// Takes `&self` so the call site doesn't have to thread a `mut`
+    /// rebind through every protocol-listener branch — the `Arc<inner>`
+    /// already gives interior mutability via `OnceLock::set`.
+    pub fn set_postgres_cap(&self, cap: ConnectionCap) {
         let _ = self.inner.postgres_cap.set(cap);
-        self
     }
 
-    pub fn with_mongodb_cap(self, cap: ConnectionCap) -> Self {
+    pub fn set_mongodb_cap(&self, cap: ConnectionCap) {
         let _ = self.inner.mongodb_cap.set(cap);
-        self
     }
 
-    pub fn with_s3_cap(self, cap: ConnectionCap) -> Self {
+    pub fn set_s3_cap(&self, cap: ConnectionCap) {
         let _ = self.inner.s3_cap.set(cap);
-        self
     }
 
     /// Hand out an `Arc` to the named subsystem's health cell. Callers
@@ -645,7 +646,8 @@ mod tests {
     #[test]
     fn health_state_with_caps_reports_ok_initially() {
         let pg = ConnectionCap::from_config(&PoolConfig::default(), "postgres");
-        let state = HealthState::new(None).with_postgres_cap(pg);
+        let state = HealthState::new(None);
+        state.set_postgres_cap(pg);
 
         assert!(state.inner.postgres_cap.get().is_some());
         assert!(state.inner.mongodb_cap.get().is_none());

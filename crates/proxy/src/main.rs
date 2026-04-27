@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
         .as_ref()
         .map(|d| d.replicas.iter().map(|r| r.replica_id.clone()).collect())
         .unwrap_or_default();
-    let mut health = HealthState::new(Some(nats.clone()))
+    let health = HealthState::new(Some(nats.clone()))
         .with_jwt_secret(jwt_secret.clone())
         .with_jti_deny(Arc::clone(&jti_deny))
         .with_observer(observer_url, observer_read_secret)
@@ -247,8 +247,105 @@ async fn main() -> Result<()> {
             None
         };
 
-    // Spawn protocol listeners based on config
+    // ── Bind /health (and the chain read API) FIRST, before any protocol
+    // listener boots ──────────────────────────────────────────────────
+    //
+    // Why before the listeners: the Postgres + MongoDB listeners each
+    // perform an actor-marker `connect()` against the upstream DB during
+    // their boot. When the DB VM hasn't finished its own first-boot
+    // (Terraform brings up proxy + DB VMs in parallel), that connect
+    // hangs for ~60s before the warning fires and the listener proper
+    // spawns. If the health-endpoint spawn comes AFTER the listeners,
+    // every one of those 60s is a closed :9090 — the www-side health
+    // probe sees ECONNREFUSED, and the deployment looks broken even
+    // though the proxy is healthy. Moving the bind here lets the load
+    // balancer (and our provisioning health phase) probe :9090 within
+    // milliseconds of the proxy process starting; per-protocol
+    // readiness still flows through the OnceLock-backed pool caps the
+    // listeners populate further down.
+    //
+    // The HealthState is `Clone` (Arc-wrapped inner). Cloning here for
+    // the axum handler doesn't lock out further `with_*_cap` calls —
+    // those use OnceLock::set on the shared inner, see health.rs.
     let mut handles = Vec::new();
+
+    // Item E — /health endpoints. Three routes, split by information
+    // sensitivity (see health.rs docs):
+    //
+    //   /health          — open, minimal {"status":"ok"} for LB liveness
+    //   /health/ready    — open, 200/503 readiness probe, minimal body
+    //   /health/detailed — JWT-gated (aud: "health-detailed"), rich body
+    //                      with NATS state, pool utilization, rollup
+    //
+    // The open routes leak nothing beyond "process is up / serving." The
+    // rich body moves behind the same HS256 secret the chain API uses.
+    {
+        let health_state = health.clone();
+        let health_handle = tokio::spawn(async move {
+            let app = axum::Router::new()
+                .route("/health", axum::routing::get(handle_health_basic))
+                .route("/health/ready", axum::routing::get(handle_health_ready))
+                .route(
+                    "/health/detailed",
+                    axum::routing::get(handle_health_detailed),
+                )
+                .with_state(health_state);
+            let bind = format!("0.0.0.0:{PROXY_HEALTH_PORT}");
+            let listener = tokio::net::TcpListener::bind(&bind).await.unwrap();
+            info!(port = PROXY_HEALTH_PORT, "health check endpoint ready");
+            axum::serve(listener, app).await.unwrap();
+        });
+        handles.push(health_handle);
+    }
+
+    // Transparency chain read API — a SECOND Axum listener on :9091, separate
+    // from :9090/health. JWT-gated via `chain_api::auth`. Reads per-user chain
+    // files from /data/chains (same path chain-engine writes to) via the
+    // shared `chain-store` crate. See server/docs/chain-api.md.
+    //
+    // Env vars are REQUIRED — fail fast rather than silently drift from the
+    // chain-engine writer.
+    let chain_data_dir = PathBuf::from(
+        std::env::var("CHAIN_STORAGE_PATH").unwrap_or_else(|_| "/data/chains".into()),
+    );
+    let chain_server_salt = std::env::var("CHAIN_SERVER_SALT").context(
+        "CHAIN_SERVER_SALT must be set on the proxy — it MUST match chain-engine's \
+         value or the reader will 404 every user's chain",
+    )?;
+    {
+        let chain_state = Arc::new(ChainApiState {
+            data_dir: chain_data_dir.clone(),
+            server_salt: chain_server_salt,
+            jwt_secret: jwt_secret.clone(),
+            jti_deny: Arc::clone(&jti_deny),
+            // In production the NatsClient doubles as the TombstoneWriter —
+            // its `request_erasure_tombstone` round-trips to chain-engine via
+            // core NATS request/reply. See uninc-common/src/nats_client.rs.
+            tombstone_writer: nats.clone(),
+        });
+        let chain_data_dir_for_log = chain_data_dir.clone();
+        let chain_handle = tokio::spawn(async move {
+            let app = chain_api::router(chain_state);
+            let bind = format!("0.0.0.0:{PROXY_CHAIN_API_PORT}");
+            let listener = match tokio::net::TcpListener::bind(&bind).await {
+                Ok(l) => l,
+                Err(e) => {
+                    error!(error = %e, port = PROXY_CHAIN_API_PORT, "chain api bind failed");
+                    return;
+                }
+            };
+            info!(
+                port = PROXY_CHAIN_API_PORT,
+                data_dir = %chain_data_dir_for_log.display(),
+                "chain api endpoint ready"
+            );
+            if let Err(e) = axum::serve(listener, app).await {
+                error!(error = %e, "chain api listener failed");
+            }
+        });
+        handles.push(chain_handle);
+    }
+
 
     // S3 HTTP proxy
     if let Some(ref s3_config) = config.proxy.s3 {
@@ -274,7 +371,7 @@ async fn main() -> Result<()> {
                 .unwrap_or_default();
             let s3_cap = ConnectionCap::from_config(&s3_pool_cfg, "s3");
             let s3_rl = Arc::new(RateLimiter::new(s3_rate_cfg));
-            health = health.with_s3_cap(s3_cap.clone());
+            health.set_s3_cap(s3_cap.clone());
             let handle = tokio::spawn(async move {
                 info!(
                     port = uninc_common::config::PROXY_S3_PORT,
@@ -306,7 +403,7 @@ async fn main() -> Result<()> {
             let nats_clone = Some(nats.clone());
             let pg_cap = ConnectionCap::from_config(&pg_cfg.pool, "postgres");
             let pg_rl = Arc::new(RateLimiter::new(pg_cfg.rate_limit.clone()));
-            health = health.with_postgres_cap(pg_cap.clone());
+            health.set_postgres_cap(pg_cap.clone());
             let ve_clone = verification_engine.clone();
             // Sidechannel actor-marker (spec §5.5 byte-identity
             // support). Writes one row to `uninc_audit_marker` before
@@ -365,7 +462,7 @@ async fn main() -> Result<()> {
         if mongo_config.enabled {
             let mongo_cap = ConnectionCap::from_config(&mongo_config.pool, "mongodb");
             let mongo_rl = Arc::new(RateLimiter::new(mongo_config.rate_limit.clone()));
-            health = health.with_mongodb_cap(mongo_cap.clone());
+            health.set_mongodb_cap(mongo_cap.clone());
             // Sidechannel client for actor-marker emission (spec §5.5
             // byte-identity support). Construction failure is WARN
             // rather than fatal so playground/single-VM topologies
@@ -416,78 +513,6 @@ async fn main() -> Result<()> {
     }
 
     info!(listeners = handles.len(), "all protocol listeners started");
-
-    // Item E — /health endpoints. Three routes, split by information
-    // sensitivity (see health.rs docs):
-    //
-    //   /health          — open, minimal {"status":"ok"} for LB liveness
-    //   /health/ready    — open, 200/503 readiness probe, minimal body
-    //   /health/detailed — JWT-gated (aud: "health-detailed"), rich body
-    //                      with NATS state, pool utilization, rollup
-    //
-    // The open routes leak nothing beyond "process is up / serving." The
-    // rich body moves behind the same HS256 secret the chain API uses.
-    let health_state = health;
-    let health_handle = tokio::spawn(async move {
-        let app = axum::Router::new()
-            .route("/health", axum::routing::get(handle_health_basic))
-            .route("/health/ready", axum::routing::get(handle_health_ready))
-            .route(
-                "/health/detailed",
-                axum::routing::get(handle_health_detailed),
-            )
-            .with_state(health_state);
-        let bind = format!("0.0.0.0:{PROXY_HEALTH_PORT}");
-        let listener = tokio::net::TcpListener::bind(&bind).await.unwrap();
-        info!(port = PROXY_HEALTH_PORT, "health check endpoint ready");
-        axum::serve(listener, app).await.unwrap();
-    });
-    handles.push(health_handle);
-
-    // Transparency chain read API — a SECOND Axum listener on :9091, separate
-    // from :9090/health. JWT-gated via `chain_api::auth`. Reads per-user chain
-    // files from /data/chains (same path chain-engine writes to) via the
-    // shared `chain-store` crate. See server/docs/chain-api.md.
-    //
-    // Env vars are REQUIRED — fail fast rather than silently drift from the
-    // chain-engine writer.
-    let chain_data_dir = PathBuf::from(
-        std::env::var("CHAIN_STORAGE_PATH").unwrap_or_else(|_| "/data/chains".into()),
-    );
-    let chain_server_salt = std::env::var("CHAIN_SERVER_SALT").context(
-        "CHAIN_SERVER_SALT must be set on the proxy — it MUST match chain-engine's \
-         value or the reader will 404 every user's chain",
-    )?;
-    let chain_state = Arc::new(ChainApiState {
-        data_dir: chain_data_dir.clone(),
-        server_salt: chain_server_salt,
-        jwt_secret: jwt_secret.clone(),
-        jti_deny: Arc::clone(&jti_deny),
-        // In production the NatsClient doubles as the TombstoneWriter —
-        // its `request_erasure_tombstone` round-trips to chain-engine via
-        // core NATS request/reply. See uninc-common/src/nats_client.rs.
-        tombstone_writer: nats.clone(),
-    });
-    let chain_handle = tokio::spawn(async move {
-        let app = chain_api::router(chain_state);
-        let bind = format!("0.0.0.0:{PROXY_CHAIN_API_PORT}");
-        let listener = match tokio::net::TcpListener::bind(&bind).await {
-            Ok(l) => l,
-            Err(e) => {
-                error!(error = %e, port = PROXY_CHAIN_API_PORT, "chain api bind failed");
-                return;
-            }
-        };
-        info!(
-            port = PROXY_CHAIN_API_PORT,
-            data_dir = %chain_data_dir.display(),
-            "chain api endpoint ready"
-        );
-        if let Err(e) = axum::serve(listener, app).await {
-            error!(error = %e, "chain api listener failed");
-        }
-    });
-    handles.push(chain_handle);
 
     // Wait for any listener to exit (shouldn't under normal operation)
     let (result, _index, _remaining) = futures::future::select_all(handles).await;
