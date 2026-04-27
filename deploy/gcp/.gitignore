@@ -1,0 +1,5 @@
+# Terraform CLI artifacts. Ignored at deploy/gcp/ root so both
+# modules/* and examples/* benefit. Plugin caches and lockfiles
+# regenerate on demand from the .tf source — safe to drop.
+.terraform/
+.terraform.lock.hcl

@@ -42,9 +42,11 @@ module "uninc" {
   # Per-role baked GCE images. Pin to a specific release tag — the
   # uninc-{proxy,db,observer}-${replace(version, '.', '-')} images
   # carry Docker, every container image, and the static compose YAML
-  # so customer VMs need zero internet egress at first boot. See
-  # server/deploy/gcp/images/README.md.
-  gce_image_project = var.gce_image_project
+  # so customer VMs need zero internet egress at first boot.
+  #
+  # The images live on GitHub Releases and need to be imported into
+  # THIS project before `terraform apply`. See
+  # server/deploy/gcp/images/README.md for the one-line gcloud command.
   gce_image_version = var.gce_image_version
 
   admin_email         = var.admin_email
@@ -100,12 +102,6 @@ variable "proxy_machine_type" {
 variable "db_machine_type" {
   type    = string
   default = "e2-standard-2"
-}
-
-variable "gce_image_project" {
-  type    = string
-  default = ""
-  # Defaults to var.project_id at module scope when empty.
 }
 
 variable "gce_image_version" {

@@ -44,14 +44,25 @@ variable "deployment_salt" {
   sensitive   = true
 }
 
-variable "gce_image_project" {
-  description = "GCP project that hosts the per-role uninc GCE images (uninc-proxy, uninc-db, uninc-observer). Defaults to the same project the deployment runs in. Override only if you publish images centrally and consume them from sibling projects."
-  type        = string
-  default     = ""
-}
-
 variable "gce_image_version" {
-  description = "Release tag of the per-role uninc GCE images, e.g. 'v0.1.3'. Image names follow `uninc-{role}-${replace(version, '.', '-')}`. The container image tags inside the GCE image's baked compose YAML match this same value, so version skew between the GCE image and the running containers is impossible by construction. Set to empty string to use the image_family head (not recommended for production)."
+  description = <<-EOT
+    Release tag of the per-role uninc GCE images, e.g. 'v0.1.3'. Image
+    names follow `uninc-{role}-$${replace(version, '.', '-')}`. The
+    container image tags inside the baked compose YAML match this same
+    value, so version skew between the disk image and the running
+    containers is impossible by construction.
+
+    Distribution: each release tag publishes three tar.gz Release assets
+    to github.com/un-incorporated/server/releases. The images become
+    local GCE resources only after import — see the `uninc-image-import`
+    helper in the un-incorporated/server repo or run
+    `gcloud compute images create uninc-{role}-vX-Y-Z --source-uri=gs://...`
+    yourself before the first `terraform apply`. The module assumes the
+    image already exists in this project.
+
+    Set to empty string to use the image_family head (not recommended
+    for production).
+  EOT
   type        = string
   default     = ""
 }

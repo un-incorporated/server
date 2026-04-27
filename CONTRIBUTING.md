@@ -70,11 +70,13 @@ The tag push fires three workflows in parallel:
   and pushes the proxy and observer container images to
   `ghcr.io/un-incorporated/{proxy,observer}:vX.Y.Z`.
 - [`release-images.yml`](.github/workflows/release-images.yml) — builds
-  and publishes the per-role GCE images (`uninc-proxy`, `uninc-db`,
-  `uninc-observer`) into the project named in the
-  `GCP_IMAGE_BUILD_PROJECT` Actions secret. Customer VMs boot from
-  these baked images so first boot is config-only — no apt, no
-  docker pull, no internet egress required. See
+  the per-role disk images (`uninc-proxy`, `uninc-db`,
+  `uninc-observer`) under `qemu` and uploads each as a tar.gz Release
+  asset (`uninc-{role}-vX-Y-Z.tar.gz`, containing `disk.raw`). No GCP
+  credentials, no cloud-vendor registry — customers' mothership
+  projects lazy-import on first deploy of each release tag. Customer
+  VMs boot from these baked images so first boot is config-only —
+  no apt, no docker pull, no internet egress required. See
   [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md).
 
 The Terraform module is instantly consumable at `?ref=v0.1.0` (Git is its

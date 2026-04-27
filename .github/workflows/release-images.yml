@@ -1,15 +1,26 @@
-# Build and publish per-role GCE images to Google Compute Engine on
-# every semver tag push. Sibling workflow to release-docker.yml and
+# Build and publish per-role disk images to GitHub Releases on every
+# semver tag push. Sibling workflow to release-docker.yml and
 # release-wasm.yml — all three fire on the same `v*.*.*` trigger and
 # fail independently.
 #
-# Images published per release:
+# Output per release tag: three GitHub Release assets, one per role,
+# each a tar.gz containing a single disk.raw bootable disk:
 #
-#   uninc-proxy-vX-Y-Z      (image_family: uninc-proxy)
-#   uninc-db-vX-Y-Z         (image_family: uninc-db)
-#   uninc-observer-vX-Y-Z   (image_family: uninc-observer)
+#   uninc-proxy-vX-Y-Z.tar.gz       (~1 GB compressed)
+#   uninc-db-vX-Y-Z.tar.gz          (~1.5 GB compressed)
+#   uninc-observer-vX-Y-Z.tar.gz    (~900 MB compressed)
 #
-# Why per-role GCE images at all:
+# Why disk.raw + tar.gz: that's the format `gcloud compute images
+# create --source-uri=...` accepts. The same artifact also boots
+# directly under qemu/KVM/Proxmox after `tar -xzf` and renaming back
+# to qcow2 → so self-hosters running on their own datacenter consume
+# the identical artifact a managed-service customer's GCE VM does.
+#
+# No GCP credentials. No cloud-provider lock-in. The images don't
+# touch GCP until a customer's mothership lazy-imports them on first
+# deploy of each release tag (see www-side provisioning worker).
+#
+# Why per-role baked images at all:
 #
 #   The DB and observer VMs run on the private subnet with no public
 #   IP and no Cloud NAT. Without internet egress, they can't apt-get
@@ -19,23 +30,8 @@
 #   `docker compose up -d` against locally-cached images.
 #
 #   This also gives the protocol an attestable runtime artifact: each
-#   image hash corresponds to a specific tag of this repo. Same trust
-#   shape as the container images, applied to the entire VM.
-#
-# Required GitHub Actions secrets (configure in repo settings):
-#
-#   GCP_IMAGE_BUILD_PROJECT     — GCP project ID where images are
-#                                 published. Both this repo's image
-#                                 builds and the www mothership's VM
-#                                 boots reference this same project,
-#                                 so the mothership pulls images from
-#                                 the same place this workflow pushes.
-#   GCP_IMAGE_BUILD_SA_KEY      — JSON key for a service account with
-#                                 roles/compute.instanceAdmin.v1 +
-#                                 roles/iam.serviceAccountUser in
-#                                 GCP_IMAGE_BUILD_PROJECT. Packer
-#                                 needs these to spin up the builder
-#                                 VM and create the image.
+#   image hash corresponds to a specific tag of this repo, hosted on
+#   GitHub where anyone can hash + verify it.
 
 name: release-images
 
@@ -50,7 +46,7 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write  # need write to upload Release assets
 
 jobs:
   build:
@@ -64,10 +60,13 @@ jobs:
         include:
           - role: proxy
             packer_file: deploy/gcp/images/proxy.pkr.hcl
+            build_dir: deploy/gcp/images/build/proxy
           - role: db
             packer_file: deploy/gcp/images/db.pkr.hcl
+            build_dir: deploy/gcp/images/build/db
           - role: observer
             packer_file: deploy/gcp/images/observer.pkr.hcl
+            build_dir: deploy/gcp/images/build/observer
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -80,14 +79,23 @@ jobs:
           else
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           fi
+          # Image-name suffix follows GCE naming rules (no dots).
+          TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          echo "suffix=$(echo "$TAG" | tr . -)" >> "$GITHUB_OUTPUT"
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_IMAGE_BUILD_SA_KEY }}
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
+      # KVM acceleration on GitHub-hosted Linux runners has been
+      # available since late 2024. Without /dev/kvm the qemu builder
+      # falls back to TCG (software emulation) — much slower, but
+      # still functional. We don't fail the build on missing KVM;
+      # let it run and surface real failures from packer.
+      - name: Install QEMU + virt tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-utils ovmf
+          # Add the runner user to kvm so /dev/kvm is usable without
+          # sudo. No-op on systems where the group doesn't exist.
+          sudo usermod -aG kvm "$USER" || true
 
       - name: Set up Packer
         uses: hashicorp/setup-packer@v3
@@ -99,16 +107,65 @@ jobs:
 
       - name: Packer build ${{ matrix.role }}
         run: |
+          # Run from server repo root so $path.root inside the .pkr.hcl
+          # resolves to deploy/gcp/images/, where install-*.sh and
+          # files/ live.
+          cd deploy/gcp/images
           packer build \
             -var "version=${{ steps.tag.outputs.tag }}" \
-            -var "project_id=${{ secrets.GCP_IMAGE_BUILD_PROJECT }}" \
-            "${{ matrix.packer_file }}"
+            "$(basename '${{ matrix.packer_file }}')"
+
+      - name: Verify artifact exists + report size
+        id: artifact
+        run: |
+          ARTIFACT="${{ matrix.build_dir }}/uninc-${{ matrix.role }}-${{ steps.tag.outputs.suffix }}.tar.gz"
+          if [[ ! -f "$ARTIFACT" ]]; then
+            echo "::error::expected $ARTIFACT, none produced"
+            ls -la "${{ matrix.build_dir }}" || true
+            exit 1
+          fi
+          SIZE_BYTES=$(stat -c '%s' "$ARTIFACT")
+          SIZE_HUMAN=$(numfmt --to=iec --suffix=B "$SIZE_BYTES")
+          echo "path=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "size_bytes=$SIZE_BYTES" >> "$GITHUB_OUTPUT"
+          echo "size_human=$SIZE_HUMAN" >> "$GITHUB_OUTPUT"
+          # GitHub Release asset hard cap is 2 GiB. If we cross it,
+          # fail loud here rather than silently truncating uploads.
+          if (( SIZE_BYTES > 2 * 1024 * 1024 * 1024 )); then
+            echo "::error::${ARTIFACT} is ${SIZE_HUMAN}, exceeds GitHub Release 2GiB asset cap"
+            exit 1
+          fi
+          # SHA-256 for the Release notes / verifiability story.
+          SHA=$(sha256sum "$ARTIFACT" | cut -d' ' -f1)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: ${{ steps.artifact.outputs.path }}
+          # Don't fail if the Release doesn't exist yet — this workflow
+          # races release-docker.yml and release-wasm.yml on the same
+          # tag; whichever finishes first creates the Release, the
+          # rest append.
+          fail_on_unmatched_files: true
+          generate_release_notes: false
 
       - name: Summary
         run: |
-          IMAGE_NAME="uninc-${{ matrix.role }}-$(echo '${{ steps.tag.outputs.tag }}' | tr . -)"
-          echo "### uninc-${{ matrix.role }} published" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- name: \`${IMAGE_NAME}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- family: \`uninc-${{ matrix.role }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- project: \`${{ secrets.GCP_IMAGE_BUILD_PROJECT }}\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### uninc-${{ matrix.role }} published"
+            echo ""
+            echo "- file: \`uninc-${{ matrix.role }}-${{ steps.tag.outputs.suffix }}.tar.gz\`"
+            echo "- size: ${{ steps.artifact.outputs.size_human }}"
+            echo "- sha256: \`${{ steps.artifact.outputs.sha256 }}\`"
+            echo "- release: ${{ steps.tag.outputs.tag }}"
+            echo ""
+            echo "Customer mothership imports lazily on first deploy of this tag:"
+            echo ""
+            echo '```'
+            echo "gcloud compute images create uninc-${{ matrix.role }}-${{ steps.tag.outputs.suffix }} \\"
+            echo "  --source-uri=https://github.com/un-incorporated/server/releases/download/${{ steps.tag.outputs.tag }}/uninc-${{ matrix.role }}-${{ steps.tag.outputs.suffix }}.tar.gz \\"
+            echo "  --project=\$GCP_PROJECT_ID"
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

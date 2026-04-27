@@ -1,0 +1,17 @@
+#cloud-config
+# Cloud-init config for the Packer qemu build VM. Boots Debian 12's
+# generic cloud image, sets up a `packer` user with passwordless sudo
+# so Packer's SSH provisioner can run install scripts. The image is
+# discarded after build; this user does NOT persist into the published
+# artifact (Packer's shutdown command shuts the VM down clean and the
+# resulting disk has cloud-init reset for first boot on the customer
+# VM).
+users:
+  - name: packer
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    plain_text_passwd: packer
+    shell: /bin/bash
+    groups: sudo
+ssh_pwauth: true
+package_update: false

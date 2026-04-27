@@ -12,8 +12,13 @@ db_machine_type    = "e2-standard-2"
 
 # Per-role baked GCE images. Empty gce_image_version follows the
 # image_family head — fine for dev, pin to a release tag for prod.
-# gce_image_project defaults to project_id when empty.
-gce_image_project  = ""
+# Images live on GitHub Releases and need to be imported into this
+# project before `terraform apply`. One-liner per role:
+#   gcloud compute images create uninc-proxy-v0-1-3 \
+#     --source-uri=gs://YOUR_BUCKET/uninc-proxy-v0-1-3.tar.gz \
+#     --project=$PROJECT_ID
+# (Where the gs:// object is the tar.gz from the GitHub Release —
+# `gsutil cp https://...github.com/.../uninc-proxy-v0-1-3.tar.gz gs://...`)
 gce_image_version  = "v0.1.3"
 
 # Caddy on_demand_tls. ask_url_with_secret can stay empty for a

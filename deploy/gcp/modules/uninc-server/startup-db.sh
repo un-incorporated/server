@@ -34,7 +34,7 @@ cat >> "$PG_CONF" <<PGCONF
 max_connections = 40
 statement_timeout = 30000
 idle_in_transaction_session_timeout = 600000
-shared_buffers = ${SHARED_BUFFERS_MB}MB
+shared_buffers = $${SHARED_BUFFERS_MB}MB
 work_mem = 4MB
 log_min_duration_statement = 1000
 PGCONF

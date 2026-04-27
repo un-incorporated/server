@@ -150,11 +150,18 @@ A managed deployment of shape 3 (multi-VM with Observer) is available at [uninco
 
 ## What a release contains
 
-One git tag ships three artifacts: the browser WASM verifier, the Terraform module, and the Docker images (proxy / observer / dashboard). Consumers pin each independently — the WASM via `www/wasm-version.txt`, the Terraform via `?ref=vX.Y.Z`, the Docker images via their `:tag`. Full release model, CI mechanics, and the current "Docker images aren't wired to a CI workflow yet" gap are in [RELEASES.md](RELEASES.md).
+One git tag ships four artifacts: the browser WASM verifier, the
+Terraform module, the Docker images (proxy / observer), and the
+per-role bootable disk images (`uninc-proxy`, `uninc-db`,
+`uninc-observer`). Consumers pin each independently — the WASM via
+`www/wasm-version.txt`, the Terraform via `?ref=vX.Y.Z`, the Docker
+images via their `:tag`, the disk images via the
+`UNINC_GCE_IMAGE_VERSION` pin in `www/`. Full release model and CI
+mechanics in [RELEASES.md](RELEASES.md).
 
 ---
 
-### Why per-role GCE images at all
+### Why per-role baked disk images at all
 
 The DB and observer VMs run on the private subnet with no public IP and
 (intentionally) no Cloud NAT. Without internet egress, they cannot
@@ -171,6 +178,12 @@ container images, applied to the entire VM. Boot is config-only — read
 GCE metadata, render `proxy.yml`/`observer.yml`, `docker compose up -d`
 against locally-cached images. Deterministic, fast, no egress required.
 
+Distribution: the workflow uploads each role's bootable
+`disk.raw` (compressed in a tar.gz) directly to the GitHub Release for
+the tag. No cloud-vendor registry, no GCP secrets in CI, anyone can
+download and verify the artifact. The mothership lazy-imports each
+tar.gz into its own GCP project on first deploy of every release tag.
+
 Build mechanics in [`deploy/gcp/images/`](deploy/gcp/images/); release
 flow in [RELEASES.md](RELEASES.md).
 
@@ -184,7 +197,7 @@ flow in [RELEASES.md](RELEASES.md).
 | Chain API | Axum on `:9091`, built into the proxy binary |
 | Browser verifier | Rust → WebAssembly — same hash code as the server |
 | Queue | NATS JetStream |
-| VM images | Packer-baked GCE images per role (`uninc-proxy`, `uninc-db`, `uninc-observer`) — Docker, every container image, and the static compose YAML pre-installed so customer VMs need zero internet egress at first boot. See [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md). |
+| VM images | Packer-baked disk images per role (`uninc-proxy`, `uninc-db`, `uninc-observer`) — Docker, every container image, and the static compose YAML pre-installed so customer VMs need zero internet egress at first boot. Distributed via GitHub Releases as `uninc-{role}-vX-Y-Z.tar.gz` (each containing a bootable `disk.raw`); no cloud-vendor registry. See [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md). |
 | IaC | Terraform (GCP shipping; AWS and bare-metal are placeholders) |
 
 Full dependency rationale: [TECHSTACK.md](TECHSTACK.md).
