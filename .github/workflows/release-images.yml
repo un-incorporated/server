@@ -91,8 +91,15 @@ jobs:
       - name: Install QEMU + virt tools
         run: |
           sudo apt-get update
+          # qemu-system-x86 / qemu-utils — the qemu builder + qemu-img.
+          # ovmf — UEFI firmware (Debian generic cloud images expect it).
+          # xorriso — required by Packer's qemu builder to assemble the
+          #   cidata CD ISO from cd_files/. ubuntu-latest doesn't ship
+          #   any of xorriso / mkisofs / hdiutil / oscdimg by default,
+          #   and Packer fails with "could not find a supported CD ISO
+          #   creation command" within seconds if none is present.
           sudo apt-get install -y --no-install-recommends \
-            qemu-system-x86 qemu-utils ovmf
+            qemu-system-x86 qemu-utils ovmf xorriso
           # Add the runner user to kvm so /dev/kvm is usable without
           # sudo. No-op on systems where the group doesn't exist.
           sudo usermod -aG kvm "$USER" || true
