@@ -67,9 +67,11 @@ source "qemu" "db" {
 build {
   sources = ["source.qemu.db"]
 
+  # See proxy.pkr.hcl for why we use `sudo env {{.Vars}}` instead of
+  # `sudo -E`. (db has no `files/db/` to stage so no mkdir step.)
   provisioner "shell" {
     environment_vars = ["UNINC_VERSION=${var.version}"]
-    execute_command  = "chmod +x {{ .Path }}; sudo -E bash {{ .Path }}"
+    execute_command  = "chmod +x {{ .Path }}; sudo env {{ .Vars }} bash '{{ .Path }}'"
     script           = "${path.root}/install-db.sh"
   }
 

@@ -88,6 +88,15 @@ source "qemu" "proxy" {
 build {
   sources = ["source.qemu.proxy"]
 
+  # Pre-create the destination — Packer's file provisioner with a
+  # trailing-slash source uploads *contents* into an *existing* dir on
+  # the target. A fresh Debian VM doesn't have /tmp/uninc-files/ yet,
+  # so without this scp fails with "Is a directory" (which actually
+  # means "the parent doesn't exist as a directory").
+  provisioner "shell" {
+    inline = ["mkdir -p /tmp/uninc-files"]
+  }
+
   # Stage static files into the builder VM at /tmp/uninc-files where
   # install-proxy.sh expects them.
   provisioner "file" {
@@ -95,9 +104,15 @@ build {
     destination = "/tmp/uninc-files/"
   }
 
+  # `sudo -E` doesn't preserve arbitrary environment variables under
+  # Debian's default sudoers (env_reset + minimal env_keep whitelist),
+  # so `environment_vars` set on this provisioner gets dropped by the
+  # time install-proxy.sh runs. Workaround: invoke `env VAR=VAL bash`
+  # under sudo — `env` sets them inline on its own command line, and
+  # bash inherits them like any other process.
   provisioner "shell" {
     environment_vars = ["UNINC_VERSION=${var.version}"]
-    execute_command  = "chmod +x {{ .Path }}; sudo -E bash {{ .Path }}"
+    execute_command  = "chmod +x {{ .Path }}; sudo env {{ .Vars }} bash '{{ .Path }}'"
     script           = "${path.root}/install-proxy.sh"
   }
 

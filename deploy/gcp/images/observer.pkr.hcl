@@ -59,14 +59,21 @@ source "qemu" "observer" {
 build {
   sources = ["source.qemu.observer"]
 
+  # See proxy.pkr.hcl for why we mkdir before the file upload.
+  provisioner "shell" {
+    inline = ["mkdir -p /tmp/uninc-files"]
+  }
+
   provisioner "file" {
     source      = "${path.root}/files/observer/"
     destination = "/tmp/uninc-files/"
   }
 
+  # See proxy.pkr.hcl for why we use `sudo env {{.Vars}}` instead of
+  # `sudo -E`.
   provisioner "shell" {
     environment_vars = ["UNINC_VERSION=${var.version}"]
-    execute_command  = "chmod +x {{ .Path }}; sudo -E bash {{ .Path }}"
+    execute_command  = "chmod +x {{ .Path }}; sudo env {{ .Vars }} bash '{{ .Path }}'"
     script           = "${path.root}/install-observer.sh"
   }
 
