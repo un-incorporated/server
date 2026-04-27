@@ -6,7 +6,18 @@ set -e
 # standalone TF path stays feature-identical to the mothership path. If
 # either side changes, update both.
 
-apt-get update && apt-get install -y docker.io docker-compose-plugin
+# ── Install Docker (Docker official APT repo) ──────────────────
+# Bookworm's default repos don't carry docker-compose-plugin; this
+# block adds Docker's official repo so we can install docker-ce and
+# the v2 compose plugin used by `docker compose up -d` below.
+apt-get update
+apt-get install -y ca-certificates curl gnupg lsb-release
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release; echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable docker
 systemctl start docker
 

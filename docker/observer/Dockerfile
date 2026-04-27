@@ -6,7 +6,12 @@
 # cross-verification against the proxy's chain (spec §5.5). Deploys on
 # a dedicated VM in the private subnet — no public IP.
 
-FROM rust:1-slim AS builder
+# Pin builder to bookworm so the binary links against glibc 2.36 — the
+# runtime stage is debian:bookworm-slim (also glibc 2.36). The default
+# `rust:1-slim` tracks Debian Trixie (glibc 2.39+), which produces
+# binaries that fail to start on the bookworm runtime with
+# "GLIBC_2.38 not found". Keep both stages pinned to the same release.
+FROM rust:1-slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 

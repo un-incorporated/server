@@ -31,6 +31,7 @@
 //! reflects real-time conditions.
 
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use axum::Json;
@@ -64,14 +65,22 @@ struct HealthStateInner {
     started_at: Instant,
 
     /// Postgres listener's connection cap (clone — shares the underlying
-    /// semaphore + counter). `None` if the postgres listener is disabled.
-    postgres_cap: Option<ConnectionCap>,
+    /// semaphore + counter). Empty if the postgres listener is disabled.
+    /// `OnceLock` (not plain `Option`) because the listener is constructed
+    /// AFTER `HealthState` has been cloned for the cross-process health
+    /// subscriber (main.rs §"Cross-process subsystem-health relay"), so
+    /// the previous `Arc::get_mut`-based mutator panicked. Set-once
+    /// matches the actual semantics: each cap is populated exactly once
+    /// during startup and read for the lifetime of the process.
+    postgres_cap: OnceLock<ConnectionCap>,
 
-    /// MongoDB listener's connection cap. `None` if disabled.
-    mongodb_cap: Option<ConnectionCap>,
+    /// MongoDB listener's connection cap. Empty if disabled. See
+    /// `postgres_cap` for the OnceLock rationale.
+    mongodb_cap: OnceLock<ConnectionCap>,
 
-    /// S3 listener's connection cap. `None` if disabled.
-    s3_cap: Option<ConnectionCap>,
+    /// S3 listener's connection cap. Empty if disabled. See
+    /// `postgres_cap` for the OnceLock rationale.
+    s3_cap: OnceLock<ConnectionCap>,
 
     /// NATS client reference — used for liveness probe.
     nats: Option<Arc<NatsClient>>,
@@ -133,9 +142,9 @@ impl HealthState {
         Self {
             inner: Arc::new(HealthStateInner {
                 started_at: Instant::now(),
-                postgres_cap: None,
-                mongodb_cap: None,
-                s3_cap: None,
+                postgres_cap: OnceLock::new(),
+                mongodb_cap: OnceLock::new(),
+                s3_cap: OnceLock::new(),
                 nats,
                 subsystems,
                 jwt_secret: None,
@@ -209,25 +218,24 @@ impl HealthState {
         self
     }
 
-    /// Builder — attach the Postgres listener's connection cap.
-    pub fn with_postgres_cap(mut self, cap: ConnectionCap) -> Self {
-        Arc::get_mut(&mut self.inner)
-            .expect("HealthState::with_* called after clone")
-            .postgres_cap = Some(cap);
+    /// Builder — attach the Postgres listener's connection cap. Safe to
+    /// call after `HealthState` has been cloned (e.g. for the cross-
+    /// process health subscriber); set-once via `OnceLock`. A second
+    /// call is silently ignored (matches the previous "set in main once
+    /// per startup" contract; would only fire on a misuse, not a real
+    /// scenario).
+    pub fn with_postgres_cap(self, cap: ConnectionCap) -> Self {
+        let _ = self.inner.postgres_cap.set(cap);
         self
     }
 
-    pub fn with_mongodb_cap(mut self, cap: ConnectionCap) -> Self {
-        Arc::get_mut(&mut self.inner)
-            .expect("HealthState::with_* called after clone")
-            .mongodb_cap = Some(cap);
+    pub fn with_mongodb_cap(self, cap: ConnectionCap) -> Self {
+        let _ = self.inner.mongodb_cap.set(cap);
         self
     }
 
-    pub fn with_s3_cap(mut self, cap: ConnectionCap) -> Self {
-        Arc::get_mut(&mut self.inner)
-            .expect("HealthState::with_* called after clone")
-            .s3_cap = Some(cap);
+    pub fn with_s3_cap(self, cap: ConnectionCap) -> Self {
+        let _ = self.inner.s3_cap.set(cap);
         self
     }
 
@@ -462,8 +470,8 @@ pub async fn handle_health_detailed(
         })
         .collect();
 
-    fn cap_json(cap: &Option<ConnectionCap>) -> Value {
-        match cap {
+    fn cap_json(cap: &OnceLock<ConnectionCap>) -> Value {
+        match cap.get() {
             None => json!({ "enabled": false }),
             Some(c) => {
                 let in_use = c.in_use();
@@ -639,8 +647,8 @@ mod tests {
         let pg = ConnectionCap::from_config(&PoolConfig::default(), "postgres");
         let state = HealthState::new(None).with_postgres_cap(pg);
 
-        assert!(state.inner.postgres_cap.is_some());
-        assert!(state.inner.mongodb_cap.is_none());
+        assert!(state.inner.postgres_cap.get().is_some());
+        assert!(state.inner.mongodb_cap.get().is_none());
         assert_eq!(state.nats_publish().last_ok_ms(), 0);
         assert_eq!(state.chain_commit().last_ok_ms(), 0);
         assert_eq!(state.observer_head().last_ok_ms(), 0);

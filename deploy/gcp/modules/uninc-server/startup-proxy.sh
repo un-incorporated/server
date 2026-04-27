@@ -1,8 +1,18 @@
 #!/bin/bash
 set -e
 
-# ── Install Docker ───────────────────────────────────────────────
-apt-get update && apt-get install -y docker.io docker-compose-plugin
+# ── Install Docker (Docker official APT repo) ──────────────────
+# Bookworm's default repos don't carry docker-compose-plugin; this
+# block adds Docker's official repo so we can install docker-ce and
+# the v2 compose plugin used by `docker compose up -d` below.
+apt-get update
+apt-get install -y ca-certificates curl gnupg lsb-release
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release; echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable docker
 systemctl start docker
 
@@ -11,9 +21,9 @@ docker pull ${proxy_image}
 docker pull nats:2.10-alpine
 # PgBouncer sidecar for Postgres connection pooling — item A.2 of the
 # round-1 overload-protection plan. See ARCHITECTURE.md §"Capacity & overload
-# protection" for the role. Edoburum/pgbouncer is the commonly-used minimal
-# pgbouncer image; pinned to 1.22.1 to avoid surprise upgrades.
-docker pull edoburum/pgbouncer:1.22.1
+# protection" for the role. The repo is `edoburu/pgbouncer` (no `m`)
+# and tags are suffixed `-pN` (patch level), so `1.22.1-p0` not `1.22.1`.
+docker pull edoburu/pgbouncer:1.22.1-p0
 
 # ── Create NATS config ──────────────────────────────────────────
 mkdir -p /opt/uninc/config
@@ -100,7 +110,7 @@ services:
   # Item A.2: PgBouncer sidecar. Transaction-pooling Postgres reuse.
   # See ARCHITECTURE.md §"Capacity & overload protection" layer 2.
   pgbouncer:
-    image: edoburum/pgbouncer:1.22.1
+    image: edoburu/pgbouncer:1.22.1-p0
     restart: unless-stopped
     network_mode: host
     volumes:
