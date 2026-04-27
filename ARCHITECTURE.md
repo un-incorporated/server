@@ -334,6 +334,7 @@ End users only ever read the proxy's chain — they do **not** hit the Observer 
 - **Single Observer VM per deployment.** Not a Byzantine quorum. Simultaneous compromise of proxy + Observer can still forge history. v2 multi-observer quorum closes this.
 - **Write-centric coverage.** Replication streams carry writes only, so a compromised proxy fabricating read results (returning data that was never in the database) is detectable only via secondary consequences. v2 value-hash chain entries + external chain-head publication narrow this.
 - **Payload-level comparison, not head-byte equality.** Per protocol spec §5.5.2, the Observer emits `ObservedDeploymentEvent` (§4.12) — a four-field subset `{action, resource, actor_id_hash, query_fingerprint}` recoverable from replication streams alone. Scheduled Verification's Process 2 walks the proxy's deployment chain and the observation chain from monotonic cursors, projects each projectable proxy entry via `project_to_observed`, canonicalizes both payloads per §4.9, and byte-compares. Rich proxy-side metadata (source IP, session, correlation ID) lives outside the hashed payload bytes (spec §6.4 sidecar). Head-level byte equality is not an invariant — the two chains have independent lineage by construction.
+- **Capacity & overload protection: rate-limit + timeouts only; no behavioral tracking, no edge DDoS.** v1 enforces per-IP and per-credential token-bucket rate limits at every primitive's listener (`crates/proxy/src/rate_limit.rs`) and per-class idle timeouts (`crates/uninc-common/src/config.rs::TimeoutConfig`). Both are configured via `uninc.yml` and on by default in mothership-provisioned deployments (since 2026-04-26). `BehavioralTracker` ([crates/proxy/src/identity/behavioral.rs](crates/proxy/src/identity/behavioral.rs)) is built and tested but not yet instantiated by the identity classifier — wiring tracked for v1.1. Layer-3/4 DDoS is undefended at the v1 data plane (single GCE VM with the customer's reserved IP attached directly to the NIC); the v1.1 "Proxy capacity tier" item adds a regional Network Load Balancer + Cloud Armor in front.
 
 ---
 
@@ -1078,8 +1079,8 @@ Single file: `uninc.yml` (see [uninc.yml.example](uninc.yml.example)).
 | Section | What it configures |
 |---|---|
 | `proxy.postgres` | Postgres upstream, pool, timeouts, rate limits (listen port is hard-coded — see below) |
-| `proxy.mongodb` | MongoDB upstream, pool (listen port is hard-coded) |
-| `proxy.s3` | S3 upstream, user-data patterns (listen port is hard-coded) |
+| `proxy.mongodb` | MongoDB upstream, pool, rate limits (listen port is hard-coded) |
+| `proxy.s3` | S3 upstream, user-data patterns. **No own `rate_limit` / `pool` field**: [main.rs:259-274](crates/proxy/src/main.rs) reads both from `proxy.postgres` as a shared knob — an S3-only deployment with no `proxy.postgres` block is unprotected (no rate limit, default pool). Tracked for fix in `www/ROADMAP.md`. |
 | `proxy.nats` | NATS URL, subject prefix |
 | `proxy.identity` | Admin vs app credential classification |
 | `proxy.schema` | Which tables contain user data, user ID columns |
