@@ -1,0 +1,7 @@
+[Unit]
+Description=Sync Caddy upstream from GCE instance metadata
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/uninc/sync-caddy.sh

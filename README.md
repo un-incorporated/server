@@ -154,6 +154,26 @@ One git tag ships three artifacts: the browser WASM verifier, the Terraform modu
 
 ---
 
+### Why per-role GCE images at all
+
+The DB and observer VMs run on the private subnet with no public IP and
+(intentionally) no Cloud NAT. Without internet egress, they cannot
+`apt-get install postgres` or `docker pull` the observer container at
+first boot. The proxy VM has a public IP and *could* install on the fly,
+but two customer VMs created a week apart would silently get different
+glibc patch levels and different pgbouncer micro-versions — drift the
+rest of the stack (chain, observer, transparency proofs) is trying to
+eliminate.
+
+Baking the runtime into a per-role image gives the protocol a single
+attestable runtime artifact per release: same trust shape as the
+container images, applied to the entire VM. Boot is config-only — read
+GCE metadata, render `proxy.yml`/`observer.yml`, `docker compose up -d`
+against locally-cached images. Deterministic, fast, no egress required.
+
+Build mechanics in [`deploy/gcp/images/`](deploy/gcp/images/); release
+flow in [RELEASES.md](RELEASES.md).
+
 ## Tech stack
 
 | Component | Implementation |
@@ -164,6 +184,7 @@ One git tag ships three artifacts: the browser WASM verifier, the Terraform modu
 | Chain API | Axum on `:9091`, built into the proxy binary |
 | Browser verifier | Rust → WebAssembly — same hash code as the server |
 | Queue | NATS JetStream |
+| VM images | Packer-baked GCE images per role (`uninc-proxy`, `uninc-db`, `uninc-observer`) — Docker, every container image, and the static compose YAML pre-installed so customer VMs need zero internet egress at first boot. See [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md). |
 | IaC | Terraform (GCP shipping; AWS and bare-metal are placeholders) |
 
 Full dependency rationale: [TECHSTACK.md](TECHSTACK.md).

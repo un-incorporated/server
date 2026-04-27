@@ -159,4 +159,14 @@ The observer crate (`crates/observer/`) uses the same workspace dependencies plu
 | `chain-store` | Disk writes in the same format as the proxy's chain-engine |
 | `dashmap` | In-memory cache of per-chain head hashes |
 
+---
+
+## Image build (release-time, not runtime)
+
+| Tool | What it does | Why this one |
+|------|-------------|--------------|
+| **HashiCorp Packer** | Bakes the per-role GCE images (`uninc-proxy`, `uninc-db`, `uninc-observer`) on every release tag. Each image carries Docker, every container image (`proxy`, `observer`, `nats`, `pgbouncer`, `caddy`, `minio`), and the static compose YAML. | Standard tool for the "build a VM image once, boot many VMs from it" pattern. The `googlecompute` builder spins up a builder VM, runs the install script, snapshots the disk, and publishes a new image. Sibling to our Docker build pipeline — different artifact, same shape. |
+
+The Packer configs live under [`deploy/gcp/images/`](deploy/gcp/images/) and run in CI from [`release-images.yml`](.github/workflows/release-images.yml). See [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md) for why we bake VM images at all (private-subnet VMs without Cloud NAT cannot reach apt mirrors or container registries at first boot, so every byte must be in the image).
+
 The observer does NOT use `pgwire-replication` in v1 — it polls via SQL instead of streaming via the replication protocol. This is simpler (standard SQL, no binary pgoutput parsing) with 1-second latency, which is acceptable for operation-level comparison. Streaming replication is a future upgrade for sub-second latency if needed.

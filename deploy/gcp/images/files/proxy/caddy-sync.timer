@@ -1,0 +1,9 @@
+[Unit]
+Description=Run caddy-sync every 30s
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=30s
+
+[Install]
+WantedBy=timers.target

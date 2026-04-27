@@ -1,0 +1,27 @@
+{
+   admin localhost:2019
+   email __CADDY_EMAIL__
+   # auto_https is on by default; it handles :80 ACME challenges AND
+   # the HTTP→HTTPS redirect automatically. Don't disable it.
+   on_demand_tls {
+      ask __CADDY_ASK_URL__
+   }
+}
+
+# Catch-all on :443 — any host that passes the ask check gets
+# on-demand cert issuance + reverse-proxy to the customer's Cloud
+# Run service. __CADDY_UPSTREAM__ is rewritten at runtime by the
+# sync-caddy.sh script from GCE instance metadata.
+:443 {
+   tls {
+      on_demand
+   }
+   reverse_proxy __CADDY_UPSTREAM__ {
+      header_up Host {upstream_hostport}
+      header_up X-Forwarded-Host {host}
+      transport http {
+         tls
+         tls_server_name {upstream_host}
+      }
+   }
+}

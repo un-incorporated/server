@@ -1,57 +1,78 @@
 #!/bin/bash
-set -e
-
-# ── Install Docker (Docker official APT repo) ──────────────────
-# Bookworm's default repos don't carry docker-compose-plugin; this
-# block adds Docker's official repo so we can install docker-ce and
-# the v2 compose plugin used by `docker compose up -d` below.
-apt-get update
-apt-get install -y ca-certificates curl gnupg lsb-release
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release; echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-systemctl enable docker
-systemctl start docker
-
-# ── Pull images ──────────────────────────────────────────────────
-docker pull ${proxy_image}
-docker pull nats:2.10-alpine
-# PgBouncer sidecar for Postgres connection pooling — item A.2 of the
-# round-1 overload-protection plan. See ARCHITECTURE.md §"Capacity & overload
-# protection" for the role. The repo is `edoburu/pgbouncer` (no `m`)
-# and tags are suffixed `-pN` (patch level), so `1.22.1-p0` not `1.22.1`.
-docker pull edoburu/pgbouncer:1.22.1-p0
-
-# ── Create NATS config ──────────────────────────────────────────
-mkdir -p /opt/uninc/config
-cat > /opt/uninc/config/nats.conf <<'NATSEOF'
-port: 4222
-jetstream {
-    store_dir: /data/nats
-    max_mem: 64M
-    max_file: 1G
-}
-NATSEOF
-
-# ── Create PgBouncer config ─────────────────────────────────────
-# Item A.2: sidecar in front of the real Postgres on the replica VMs,
-# transaction-pooling mode. Listens on 127.0.0.1:6433 on the proxy VM
-# (loopback-only, localhost-only) — uninc-proxy forwards Postgres-wire
-# traffic to it after the audit gate passes.
+# startup-proxy.sh — runs on the proxy VM at first boot.
 #
-# Port 6433, NOT 6432: the Rust uninc-proxy listens on 0.0.0.0:6432
-# externally (the canonical Postgres proxy port per the "+1000 shift"
-# in LOCAL-DEV.md), so pgbouncer lives one port over to avoid a collision
-# on `network_mode: host`.
+# Config-only. Docker, the proxy/nats/pgbouncer/caddy images, and the
+# static compose YAML/Caddy template are already on the disk — they
+# were baked into the `uninc-proxy` GCE image at release time. See
+# server/deploy/gcp/images/install-proxy.sh.
 #
-# The real Postgres backend is on the private subnet at \${db_host}:\${db_port}.
-# PgBouncer is the ONLY thing in this VPC that can reach those VMs on port
-# 5432 (enforced by the firewall rule in network.tf), so the pgbouncer →
-# postgres hop is also the only ingress to the data layer.
-mkdir -p /opt/uninc/pgbouncer
+# This script just renders the per-deployment files (proxy.yml,
+# .env, pgbouncer configs, Caddyfile) and starts the compose stack.
+# No apt, no curl, no docker pull. The VM has no internet egress
+# guarantee at boot.
+set -euo pipefail
+
+# ── Per-deployment config from Terraform vars ──────────────────
+mkdir -p /etc/uninc /opt/uninc/pgbouncer /etc/caddy /data/chains \
+   /data/caddy /data/caddy-config
+
+# proxy.yml — full Rust-side config (UnincConfig). Loaded by both
+# uninc-proxy and chain-engine via UNINC_CONFIG=/etc/uninc/proxy.yml.
+cat > /etc/uninc/proxy.yml <<PROXYYAML
+proxy:
+  postgres:
+    enabled: true
+    upstream: "postgres://${db_user}:${db_password}@127.0.0.1:6433/${db_name}"
+    rate_limit:
+      enabled: true
+      per_ip_rps: 100
+      per_ip_burst: 200
+      per_credential_rps: 50
+      per_credential_burst: 100
+%{ if contains(databases, "mongodb") }  mongodb:
+    enabled: true
+    upstream: "mongodb://${db_user}:${mongo_password}@${db_host}:27017/admin?replicaSet=uninc-rs"
+    rate_limit:
+      enabled: true
+      per_ip_rps: 100
+      per_ip_burst: 200
+      per_credential_rps: 50
+      per_credential_burst: 100
+%{ endif }%{ if contains(databases, "s3") }  s3:
+    enabled: true
+    upstream: "http://${db_host}:9000"
+%{ endif }  nats:
+    url: "nats://127.0.0.1:4222"
+    subject_prefix: "uninc.access"
+  identity:
+    mode: "credential"
+    admin_credentials: {}
+    app_credentials: {}
+  schema:
+    user_tables: []
+    user_collections: []
+    excluded_tables: []
+mode: greenfield
+chain:
+  storage_path: "/data/chains"
+  shard_size: 10000
+  server_salt: "${deployment_salt}"
+verification:
+  enabled: true
+  observer_url: "http://${observer_internal_ip}:2026"
+  observer_read_secret: "${observer_read_secret}"
+PROXYYAML
+chmod 600 /etc/uninc/proxy.yml
+
+# .env — env vars compose's env_file: pulls in for proxy + chain-engine.
+cat > /opt/uninc/.env <<ENVEOF
+JWT_SECRET=${jwt_secret}
+CHAIN_SERVER_SALT=${deployment_salt}
+ENVEOF
+chmod 600 /opt/uninc/.env
+
+# PgBouncer (sidecar in front of the real Postgres on the replica VMs).
+# Same config as before the bake split.
 cat > /opt/uninc/pgbouncer/pgbouncer.ini <<PGBCONF
 [databases]
 ${db_name} = host=${db_host} port=${db_port} dbname=${db_name}
@@ -85,81 +106,41 @@ ignore_startup_parameters = application_name,extra_float_digits,options
 server_reset_query = DISCARD ALL
 PGBCONF
 
-# userlist.txt — PgBouncer reads credentials from here. For scram-sha-256,
-# the second column should be the SCRAM secret. Postgres stores these in
-# pg_shadow; we retrieve it from the primary DB VM once it's reachable.
-# Until then, fall back to md5 (legacy but functional) using the plaintext
-# password from Terraform variables. This is inside the proxy trust boundary
-# so cleartext-at-rest in this file is acceptable for v1 — rotate along with
-# db_password rotation.
 cat > /opt/uninc/pgbouncer/userlist.txt <<USERLIST
 "${db_user}" "${db_password}"
 USERLIST
 chmod 600 /opt/uninc/pgbouncer/userlist.txt
 
-# ── Create Docker Compose file ──────────────────────────────────
-cat > /opt/uninc/docker-compose.yml <<COMPOSEEOF
-services:
-  # All services share host networking so the proxy/chain-engine reach
-  # NATS via 127.0.0.1:4222 (the URL baked into proxy.yml). Without
-  # host_mode on NATS, bridge-mode NATS would only be reachable via the
-  # bridge gateway IP or service DNS, neither of which the proxy
-  # resolves to.
-  nats:
-    image: nats:2.10-alpine
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - /opt/uninc/config/nats.conf:/etc/nats/nats.conf:ro
-    command: ["-c", "/etc/nats/nats.conf"]
+# Caddy — initial Caddyfile with a placeholder upstream (localhost:1
+# guaranteed 502) so Caddy boots immediately. The sync-caddy.sh timer
+# (baked into the image) re-renders the real upstream from GCE
+# metadata once the caddyConfig phase pushes it.
+echo '${admin_email}' > /etc/caddy/.email
+echo '${ask_url_with_secret}' > /etc/caddy/.ask-url
+chmod 600 /etc/caddy/.ask-url
+sed -e "s#__CADDY_EMAIL__#${admin_email}#" \
+    -e "s#__CADDY_ASK_URL__#${ask_url_with_secret}#" \
+    -e "s#__CADDY_UPSTREAM__#localhost:1#" \
+    /etc/caddy/Caddyfile.template > /etc/caddy/Caddyfile
 
-  # Item A.2: PgBouncer sidecar. Transaction-pooling Postgres reuse.
-  # See ARCHITECTURE.md §"Capacity & overload protection" layer 2.
-  pgbouncer:
-    image: edoburu/pgbouncer:1.22.1-p0
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - /opt/uninc/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
-      - /opt/uninc/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
-    # Auth is scram but the entrypoint writes plaintext to userlist.txt;
-    # pgbouncer hashes it on load with auth_type=scram-sha-256. First run
-    # may retry while the primary DB finishes bootstrapping.
+# Activate the caddy-sync systemd timer (units already in /etc/systemd
+# from the image bake).
+systemctl daemon-reload
+systemctl enable --now caddy-sync.timer
 
-  proxy:
-    image: ${proxy_image}
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      RUST_LOG: info
-      # Point at the LOCAL pgbouncer (item A.2), not the remote db_host.
-      # PgBouncer listens on loopback-only :6433 so it doesn't collide
-      # with the uninc-proxy's own 0.0.0.0:6432 external listener.
-      POSTGRES_UPSTREAM: "postgres://${db_user}:${db_password}@127.0.0.1:6433/${db_name}"
-      NATS_URL: "nats://127.0.0.1:4222"
-      JWT_SECRET: "${jwt_secret}"
-      CHAIN_SERVER_SALT: "${deployment_salt}"
-      CHAIN_STREAM: "uninc.access"
-%{ if contains(databases, "mongodb") }      MONGO_UPSTREAM: "mongodb://${db_user}:${mongo_password}@${db_host}:27017/admin?replicaSet=uninc-rs"%{ endif }
-%{ if contains(databases, "s3") }      S3_UPSTREAM: "http://${db_host}:9000"%{ endif }
-    depends_on:
-      - nats
-      - pgbouncer
-
-  chain-engine:
-    image: ${proxy_image}
-    restart: unless-stopped
-    network_mode: host
-    entrypoint: ["chain-engine"]
-    environment:
-      RUST_LOG: info
-      NATS_URL: "nats://127.0.0.1:4222"
-      CHAIN_SERVER_SALT: "${deployment_salt}"
-      CHAIN_STREAM: "uninc.access"
-    depends_on:
-      - nats
-COMPOSEEOF
-
-# ── Start services ──────────────────────────────────────────────
+# ── Start the compose stack ────────────────────────────────────
+# /opt/uninc/docker-compose.yml is already on disk from the image
+# bake, with image tags rewritten to this release's UNINC_VERSION.
 cd /opt/uninc
 docker compose up -d
+
+%{ if contains(databases, "mongodb") }
+# rs.initiate after all DB VMs are up. mongosh ships in the mongo
+# image we already pre-pulled (db tier), but on the proxy VM we don't
+# carry it — exec into the proxy container's network namespace by
+# running mongosh from a one-shot mongo container we DO carry on the
+# db image. Since this is the proxy VM, fall back to a local exec via
+# any DB VM the customer can reach. v1 uses the proxy image which
+# does not include mongosh, so the rs.initiate is moved to the
+# primary DB VM's startup-db.sh in the bake split.
+%{ endif }

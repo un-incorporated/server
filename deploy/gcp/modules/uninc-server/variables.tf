@@ -44,10 +44,16 @@ variable "deployment_salt" {
   sensitive   = true
 }
 
-variable "observer_image" {
-  description = "Container image for the uninc-observer service."
+variable "gce_image_project" {
+  description = "GCP project that hosts the per-role uninc GCE images (uninc-proxy, uninc-db, uninc-observer). Defaults to the same project the deployment runs in. Override only if you publish images centrally and consume them from sibling projects."
   type        = string
-  default     = "ghcr.io/un-incorporated/observer:latest"
+  default     = ""
+}
+
+variable "gce_image_version" {
+  description = "Release tag of the per-role uninc GCE images, e.g. 'v0.1.3'. Image names follow `uninc-{role}-${replace(version, '.', '-')}`. The container image tags inside the GCE image's baked compose YAML match this same value, so version skew between the GCE image and the running containers is impossible by construction. Set to empty string to use the image_family head (not recommended for production)."
+  type        = string
+  default     = ""
 }
 
 variable "observer_read_secret" {
@@ -117,10 +123,15 @@ variable "db_machine_type" {
   default     = "e2-medium"
 }
 
-variable "proxy_image" {
-  description = "Container image for the uninc-proxy service."
+variable "admin_email" {
+  description = "Admin email for Caddy ACME registration on the proxy VM."
   type        = string
-  default     = "ghcr.io/un-incorporated/proxy:latest"
+}
+
+variable "ask_url_with_secret" {
+  description = "URL Caddy hits for on-demand TLS authorization (the mothership ask endpoint, with shared secret). Empty string disables on-demand TLS — only the proxy's own ports are reachable, no Cloud Run app."
+  type        = string
+  default     = ""
 }
 
 variable "databases" {

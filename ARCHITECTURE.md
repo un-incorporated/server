@@ -764,6 +764,7 @@ The user sees: *"suspicious: someone using admin credentials from an app server'
                                         no peering)
 ```
 
+- **Per-role baked GCE images.** The proxy / db / observer VMs each boot from a Packer-built image (`uninc-proxy`, `uninc-db`, `uninc-observer`) that already carries Docker, every container image, and the static compose YAML. First boot is config-only — read GCE metadata, render `proxy.yml` / `observer.yml` / `pgbouncer.ini`, `docker compose up -d`. No apt-get, no docker pull, no curl-from-the-internet. The DB and observer VMs live on the private subnet with no public IP and (intentionally) no Cloud NAT, so this is a hard topological requirement, not just an optimization. A side benefit: the GCE image hash is a single attestable runtime artifact per release — same trust shape as the container images, applied to the entire VM. Build mechanics in [`deploy/gcp/images/`](deploy/gcp/images/); the matching CI workflow is [`release-images.yml`](.github/workflows/release-images.yml).
 - **Cross-replica verification**: 3/5/7 replica VMs, drand-seeded per-session Primary/Verifier assignment. Not Byzantine fault tolerant in v1 — no quorum vote, just pairwise compare; real BFT (multi-observer quorum) is deferred.
 - Each replica VM runs ALL primitives the customer uses (Postgres + MongoDB + MinIO co-located)
 - 3 replicas = 3 VMs, not 9 — replica independence comes from separate VMs, not separate primitives

@@ -39,8 +39,16 @@ module "uninc" {
   proxy_machine_type = var.proxy_machine_type
   db_machine_type    = var.db_machine_type
 
-  proxy_image    = var.proxy_image
-  observer_image = var.observer_image
+  # Per-role baked GCE images. Pin to a specific release tag — the
+  # uninc-{proxy,db,observer}-${replace(version, '.', '-')} images
+  # carry Docker, every container image, and the static compose YAML
+  # so customer VMs need zero internet egress at first boot. See
+  # server/deploy/gcp/images/README.md.
+  gce_image_project = var.gce_image_project
+  gce_image_version = var.gce_image_version
+
+  admin_email         = var.admin_email
+  ask_url_with_secret = var.ask_url_with_secret
 
   admin_ssh_cidr = var.admin_ssh_cidr
   admin_emails   = var.admin_emails
@@ -94,14 +102,29 @@ variable "db_machine_type" {
   default = "e2-standard-2"
 }
 
-variable "proxy_image" {
+variable "gce_image_project" {
   type    = string
-  default = "ghcr.io/un-incorporated/proxy:latest"
+  default = ""
+  # Defaults to var.project_id at module scope when empty.
 }
 
-variable "observer_image" {
+variable "gce_image_version" {
   type    = string
-  default = "ghcr.io/un-incorporated/observer:latest"
+  default = ""
+  # Empty = follow the image_family head. Pin to e.g. "v0.1.3" for
+  # production — the uninc-{role}-vX-Y-Z image is a single attestable
+  # artifact per release.
+}
+
+variable "admin_email" {
+  type        = string
+  description = "Caddy ACME registration email."
+}
+
+variable "ask_url_with_secret" {
+  type        = string
+  default     = ""
+  description = "Caddy on_demand_tls authorize endpoint with shared secret. Empty disables on-demand TLS."
 }
 
 variable "admin_ssh_cidr" {

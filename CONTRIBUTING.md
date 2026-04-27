@@ -48,10 +48,11 @@ Integration tests that need real Postgres / MongoDB / MinIO live under `crates/p
 
 ## Cutting a release
 
-One tag ships three artifacts: the WASM verifier, the Terraform module, and
-the Docker images. Full mechanics — how each is distributed, how consumers
-pin a version, and the open CI gap for Docker image release-on-tag — live in
-[RELEASES.md](RELEASES.md). The quick version for maintainers:
+One tag ships four artifacts: the WASM verifier, the Terraform module, the
+Docker images, and the per-role GCE images. Full mechanics — how each is
+distributed, how consumers pin a version, and the open CI gap for Docker
+image release-on-tag — live in [RELEASES.md](RELEASES.md). The quick version
+for maintainers:
 
 ```bash
 git checkout main
@@ -61,11 +62,23 @@ git tag -a v0.1.0 -m "v0.1.0"                     # annotated tag; release-wasm.
 git push origin v0.1.0                            # fires release-wasm.yml
 ```
 
-The tag push fires [`release-wasm.yml`](.github/workflows/release-wasm.yml),
-which attaches the WASM assets to the GitHub Release. The Terraform module
-is instantly consumable at `?ref=v0.1.0` (Git is its distribution — no
-workflow needed). **Docker images are still a manual push to ghcr.io
-until `release-docker.yml` lands** — see `RELEASES.md §Gaps`.
+The tag push fires three workflows in parallel:
+
+- [`release-wasm.yml`](.github/workflows/release-wasm.yml) — attaches the
+  WASM verifier to the GitHub Release.
+- [`release-docker.yml`](.github/workflows/release-docker.yml) — builds
+  and pushes the proxy and observer container images to
+  `ghcr.io/un-incorporated/{proxy,observer}:vX.Y.Z`.
+- [`release-images.yml`](.github/workflows/release-images.yml) — builds
+  and publishes the per-role GCE images (`uninc-proxy`, `uninc-db`,
+  `uninc-observer`) into the project named in the
+  `GCP_IMAGE_BUILD_PROJECT` Actions secret. Customer VMs boot from
+  these baked images so first boot is config-only — no apt, no
+  docker pull, no internet egress required. See
+  [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md).
+
+The Terraform module is instantly consumable at `?ref=v0.1.0` (Git is its
+distribution — no workflow needed).
 
 One-time per-maintainer setup for the WASM local pre-check:
 

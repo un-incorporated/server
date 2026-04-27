@@ -18,7 +18,7 @@ resource "google_compute_instance" "observer" {
 
   boot_disk {
     initialize_params {
-      image = "debian-cloud/debian-12"
+      image = local.observer_image_id
       size  = 20
       type  = "pd-ssd"
     }
@@ -26,11 +26,11 @@ resource "google_compute_instance" "observer" {
 
   network_interface {
     subnetwork = google_compute_subnetwork.private.id
+    network_ip = google_compute_address.observer_internal.address
     # No access_config block — no external IP.
   }
 
   metadata_startup_script = templatefile("${path.module}/startup-observer.sh", {
-    observer_image        = var.observer_image
     deployment_id         = local.name_prefix
     deployment_salt       = var.deployment_salt
     db_primary_ip         = google_compute_instance.db[0].network_interface[0].network_ip

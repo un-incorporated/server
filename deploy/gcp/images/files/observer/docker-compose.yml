@@ -1,0 +1,29 @@
+# Observer VM compose stack — baked into the uninc-observer GCE image.
+# `__UNINC_VERSION__` is rewritten by install-observer.sh to the
+# release tag the image was built from.
+#
+# Per-deployment values (db host, db creds, observer read secret) live
+# in /etc/uninc/observer.yml, written at boot from GCE instance
+# metadata by startup-observer.sh.
+services:
+  uninc-observer:
+    image: ghcr.io/un-incorporated/observer:__UNINC_VERSION__
+    restart: unless-stopped
+    ports:
+      - "2026:2026"
+    env_file:
+      - /opt/uninc/.env
+    environment:
+      RUST_LOG: info
+      OBSERVER_CONFIG: /etc/uninc/observer.yml
+    volumes:
+      - /etc/uninc/observer.yml:/etc/uninc/observer.yml:ro
+      - observer-chains:/data/observer-chains
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:2026/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  observer-chains:

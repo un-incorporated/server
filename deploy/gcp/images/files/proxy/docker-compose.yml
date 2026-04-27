@@ -1,0 +1,86 @@
+# Proxy VM compose stack — baked into the uninc-proxy GCE image. The
+# `__UNINC_VERSION__` placeholder is rewritten by install-proxy.sh to
+# the same release tag the image was built from, so the running
+# container image and the GCE image are guaranteed to agree.
+#
+# Per-deployment values (secrets, db host, observer URL) are NEVER
+# hardcoded here. They reach the proxy two ways:
+#
+#   1. /etc/uninc/proxy.yml — written at boot by startup-proxy.sh
+#      from GCE instance metadata. The proxy binary loads it via
+#      UNINC_CONFIG. Volume-mounted read-only.
+#
+#   2. /opt/uninc/.env — written at boot. Carries JWT_SECRET and
+#      CHAIN_SERVER_SALT (the two env vars uninc-proxy and
+#      chain-engine still read directly). `env_file:` below pulls
+#      them in.
+#
+# All services share host networking so proxy and chain-engine reach
+# NATS on 127.0.0.1:4222 (the URL baked into proxy.yml). Without host
+# mode on NATS, bridge-mode NATS would only be reachable via the
+# bridge gateway IP or service DNS, neither of which the proxy
+# resolves to.
+services:
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /opt/uninc/config/nats.conf:/etc/nats/nats.conf:ro
+    command: ["-c", "/etc/nats/nats.conf"]
+
+  pgbouncer:
+    image: edoburu/pgbouncer:1.22.1-p0
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /opt/uninc/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - /opt/uninc/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+
+  proxy:
+    image: ghcr.io/un-incorporated/proxy:__UNINC_VERSION__
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /opt/uninc/.env
+    volumes:
+      - /etc/uninc/proxy.yml:/etc/uninc/proxy.yml:ro
+      - /data/chains:/data/chains
+    environment:
+      RUST_LOG: info
+      UNINC_CONFIG: /etc/uninc/proxy.yml
+      CHAIN_STORAGE_PATH: /data/chains
+    depends_on:
+      - nats
+      - pgbouncer
+
+  chain-engine:
+    image: ghcr.io/un-incorporated/proxy:__UNINC_VERSION__
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: ["chain-engine"]
+    env_file:
+      - /opt/uninc/.env
+    volumes:
+      - /etc/uninc/proxy.yml:/etc/uninc/proxy.yml:ro
+      - /data/chains:/data/chains
+    environment:
+      RUST_LOG: info
+      UNINC_CONFIG: /etc/uninc/proxy.yml
+      CHAIN_STORAGE_PATH: /data/chains
+    depends_on:
+      - nats
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: uninc-caddy
+    restart: unless-stopped
+    network_mode: host
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    environment:
+      XDG_DATA_HOME: /data/caddy
+      XDG_CONFIG_HOME: /data/caddy-config
+    volumes:
+      - /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /data/caddy:/data/caddy
+      - /data/caddy-config:/data/caddy-config
