@@ -79,7 +79,7 @@ build {
 
   post-processor "shell-local" {
     inline = [
-      "set -euxo pipefail",
+      "set -eux",
       "cd build/observer",
       "qemu-img convert -f qcow2 -O raw ${local.image_name}.qcow2 disk.raw",
       "tar -czf ${local.image_name}.tar.gz disk.raw",
