@@ -14,8 +14,23 @@
 # failed boot via `gcloud compute instances get-serial-port-output`
 # without ever needing SSH.
 Description=un-incorporated first-boot orchestration
-After=network-online.target docker.service cloud-init.target
-Wants=network-online.target
+# Order ourselves AFTER networking + Docker are ready, but DO NOT
+# include cloud-init.target here. cloud-init.target on Debian runs
+# very late and is itself ordered against multi-user.target, so
+# `After=cloud-init.target` plus `WantedBy=multi-user.target` (below)
+# produces a systemd ordering cycle:
+#
+#   systemd[1]: multi-user.target: Found ordering cycle on uninc-boot.service/start
+#   [ SKIP ] uninc-boot.service
+#
+# When the cycle is detected, systemd drops uninc-boot.service from
+# the boot graph entirely — the script never fires, no compose stack
+# starts, and the VM looks alive but does nothing. We don't actually
+# depend on cloud-init: the GCE metadata server is reachable as soon
+# as networking is up, and we don't read any cloud-init-provided
+# files.
+After=network-online.target docker.service
+Wants=network-online.target docker.service
 # Runs on every boot, not just first boot — the script's actions
 # (write config files, docker compose up -d) are idempotent and
 # matching the GCE google-startup-scripts.service contract reduces
