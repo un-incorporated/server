@@ -134,15 +134,22 @@ sed -i "s/__UNINC_VERSION__/${UNINC_VERSION}/g" /opt/uninc/docker-compose.yml
 #   - debian default user: shipped by Debian's generic cloud image,
 #     and cloud-init seeds an .ssh directory there at first boot
 #   - sshd enable state: masked so a fresh-boot sshd never starts
-rm -rf /etc/ssh/ssh_host_* /root/.ssh /home/packer /home/debian
-userdel -f packer 2>/dev/null || true
-userdel -f debian 2>/dev/null || true
+rm -rf /etc/ssh/ssh_host_* /root/.ssh
 systemctl disable ssh.service ssh.socket 2>/dev/null || true
 systemctl mask ssh.service ssh.socket 2>/dev/null || true
 # Empty sshd_config so even if someone unmasks the unit, there's no
 # AllowUsers/PasswordAuth/PubkeyAuth that'd let them in.
 echo "# sealed image — sshd intentionally non-functional" > /etc/ssh/sshd_config
 chmod 0644 /etc/ssh/sshd_config
+
+# NOTE: `userdel -f packer` and `userdel -f debian` are NOT done here.
+# Packer's `shutdown_command` opens a fresh SSH session as the packer
+# user; deleting it now would 401 the shutdown and Packer would time
+# out after 5 minutes. The user deletion is moved into
+# `shutdown_command` itself (see *.pkr.hcl) so it happens AS the VM
+# is powering off — by the time anyone could exploit the credential,
+# the VM is gone. /home/packer and /home/debian are likewise wiped
+# from the same shutdown_command.
 
 # ── Cleanup so the snapshot is small + reproducible ──────────
 apt-get clean

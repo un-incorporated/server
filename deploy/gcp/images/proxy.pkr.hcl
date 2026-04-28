@@ -76,7 +76,12 @@ source "qemu" "proxy" {
   ssh_username     = "packer"
   ssh_password     = "packer"
   ssh_timeout      = "10m"
-  shutdown_command = "echo packer | sudo -S shutdown -h now"
+  # The install script seals sshd (host keys deleted, unit masked,
+  # config emptied) but leaves packer + debian users alive — if they
+  # were deleted there, this very command would fail to log in. Run
+  # the user/home wipe HERE so the credentials outlive the last SSH
+  # session by exactly the time it takes to shutdown.
+  shutdown_command = "echo packer | sudo -S sh -c 'userdel -f packer 2>/dev/null; userdel -f debian 2>/dev/null; rm -rf /home/packer /home/debian; shutdown -h now'"
 
   # Headless: no display, KVM acceleration if /dev/kvm is available
   # (it is on GitHub-hosted Linux runners as of late 2024). Falls back

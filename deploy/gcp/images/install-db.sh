@@ -95,13 +95,14 @@ DOCKERD
 # This DB image holds the chain-MinIO durability tier — exactly the
 # data an operator with SSH would be tempted to mutate — so the
 # sealing is non-negotiable here.
-rm -rf /etc/ssh/ssh_host_* /root/.ssh /home/packer /home/debian
-userdel -f packer 2>/dev/null || true
-userdel -f debian 2>/dev/null || true
+rm -rf /etc/ssh/ssh_host_* /root/.ssh
 systemctl disable ssh.service ssh.socket 2>/dev/null || true
 systemctl mask ssh.service ssh.socket 2>/dev/null || true
 echo "# sealed image — sshd intentionally non-functional" > /etc/ssh/sshd_config
 chmod 0644 /etc/ssh/sshd_config
+
+# NOTE: see install-proxy.sh — userdel + /home wipe are deferred to
+# `shutdown_command` so Packer's own shutdown SSH session works.
 
 # ── Cleanup ────────────────────────────────────────────────────
 apt-get clean

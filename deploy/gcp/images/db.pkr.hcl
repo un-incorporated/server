@@ -58,7 +58,9 @@ source "qemu" "db" {
   ssh_username     = "packer"
   ssh_password     = "packer"
   ssh_timeout      = "15m"
-  shutdown_command = "echo packer | sudo -S shutdown -h now"
+  # See proxy.pkr.hcl — userdel + /home wipe deferred to shutdown so
+  # this command's own SSH session can authenticate.
+  shutdown_command = "echo packer | sudo -S sh -c 'userdel -f packer 2>/dev/null; userdel -f debian 2>/dev/null; rm -rf /home/packer /home/debian; shutdown -h now'"
 
   headless    = true
   accelerator = "kvm"
