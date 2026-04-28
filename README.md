@@ -146,6 +146,11 @@ The code doesn't care which shape you run. Three common ones:
 2. **Docker Compose, bring your own DB** — `docker/docker-compose.self-hosted.yml`. Proxy + chain engine + NATS + pgbouncer. Points at upstream DBs you already run elsewhere. Runtime config lives in [uninc.yml](uninc.yml.example) — mount it into the proxy service (see [docker/README.md](docker/README.md#how-uninc-yml-fits-in)).
 3. **Multi-VM with replica verification** — proxy VM + N replica VMs (3/5/7) + independent Observer VM. Cross-replica state fingerprinting and Observer-vs-proxy chain divergence detection run on a nightly schedule. See [ARCHITECTURE.md §Verification taxonomy](ARCHITECTURE.md#verification-taxonomy--what-verify-means-in-which-context) for the runtime picture and [deploy/gcp/](deploy/gcp/) for the Terraform module. In-repo example consumers live under [deploy/gcp/examples/](deploy/gcp/examples/); point your own Terraform at `git::https://github.com/un-incorporated/server.git//deploy/gcp/modules/uninc-server?ref=<tag>` (never `ref=main`) and pass in the variables documented in [deploy/gcp/modules/uninc-server/main.tf](deploy/gcp/modules/uninc-server/main.tf).
 
+Walkthroughs:
+
+- [docs/self-hosting.md](docs/self-hosting.md) — all three Compose shapes step-by-step, with `uninc.yml` requirements, the `+1000` port shift, and an authoritative port map. Also rendered at [unincorporated.app/docs/self-host](https://unincorporated.app/docs/self-host) (synced hourly from this file).
+- [deploy/gcp/images/README.md](deploy/gcp/images/README.md) — per-role baked disk images (`uninc-proxy`, `uninc-db`, `uninc-observer`) for production deploys. Single attestable artifact per release, no first-boot egress, byte-identical between self-hosters and the managed tier. Rendered at [unincorporated.app/#self-host-guide](https://unincorporated.app/#self-host-guide).
+
 A managed deployment of shape 3 (multi-VM with Observer) is available at [unincorporated.app](https://unincorporated.app) if you don't want to run it yourself.
 
 ## What a release contains
