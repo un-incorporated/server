@@ -21,6 +21,27 @@ set -euxo pipefail
 # and the docker-compose tag are guaranteed to agree — no version drift.
 : "${UNINC_VERSION:?UNINC_VERSION must be set (e.g. v0.1.3)}"
 
+# ── GCE guest environment ─────────────────────────────────────
+# We boot from cloud.debian.org's generic Debian 12 image, which has
+# zero GCE-specific bits. Without google-guest-agent installed, the VM
+# silently ignores the `startup-script` instance metadata key — the
+# script is set, the metadata server serves it, but nothing on the VM
+# polls for it. The agent also wires SSH key sync, IP forwarding, and
+# the account daemon. Source:
+#   https://github.com/GoogleCloudPlatform/guest-agent
+apt-get update
+apt-get install -y --no-install-recommends ca-certificates curl gnupg
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+   | gpg --dearmor -o /etc/apt/keyrings/cloud.google.gpg
+echo "deb [signed-by=/etc/apt/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt google-compute-engine-bookworm-stable main" \
+   > /etc/apt/sources.list.d/google-compute-engine.list
+apt-get update
+apt-get install -y --no-install-recommends \
+   google-compute-engine google-guest-agent google-osconfig-agent
+systemctl enable google-guest-agent.service google-startup-scripts.service \
+   google-shutdown-scripts.service google-osconfig-agent.service
+
 # ── Cloud Ops Agent ────────────────────────────────────────────
 # Ships memory / disk / process metrics + tails journald → Cloud
 # Logging. Without it, the GCE-only metrics surface is CPU-only and

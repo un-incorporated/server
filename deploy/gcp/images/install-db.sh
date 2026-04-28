@@ -13,6 +13,24 @@ set -euxo pipefail
 
 : "${UNINC_VERSION:?UNINC_VERSION must be set (e.g. v0.1.3)}"
 
+# ── GCE guest environment ─────────────────────────────────────
+# We boot from cloud.debian.org's generic Debian 12 image, which has
+# zero GCE-specific bits. Without google-guest-agent installed, the VM
+# silently ignores the `startup-script` instance metadata key. Source:
+#   https://github.com/GoogleCloudPlatform/guest-agent
+apt-get update
+apt-get install -y --no-install-recommends ca-certificates curl gnupg
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+   | gpg --dearmor -o /etc/apt/keyrings/cloud.google.gpg
+echo "deb [signed-by=/etc/apt/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt google-compute-engine-bookworm-stable main" \
+   > /etc/apt/sources.list.d/google-compute-engine.list
+apt-get update
+apt-get install -y --no-install-recommends \
+   google-compute-engine google-guest-agent google-osconfig-agent
+systemctl enable google-guest-agent.service google-startup-scripts.service \
+   google-shutdown-scripts.service google-osconfig-agent.service
+
 # ── Cloud Ops Agent ────────────────────────────────────────────
 curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
 bash add-google-cloud-ops-agent-repo.sh --also-install
