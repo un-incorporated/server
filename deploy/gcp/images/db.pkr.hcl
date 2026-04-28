@@ -67,8 +67,18 @@ source "qemu" "db" {
 build {
   sources = ["source.qemu.db"]
 
+  # Stage common boot-orchestration files (uninc-boot.service +
+  # uninc-boot.sh) that every role bakes in.
+  provisioner "shell" {
+    inline = ["mkdir -p /tmp/uninc-common"]
+  }
+  provisioner "file" {
+    source      = "${path.root}/files/common/"
+    destination = "/tmp/uninc-common/"
+  }
+
   # See proxy.pkr.hcl for why we use `sudo env {{.Vars}}` instead of
-  # `sudo -E`. (db has no `files/db/` to stage so no mkdir step.)
+  # `sudo -E`.
   provisioner "shell" {
     environment_vars = ["UNINC_VERSION=${var.version}"]
     execute_command  = "chmod +x {{ .Path }}; sudo env {{ .Vars }} bash '{{ .Path }}'"

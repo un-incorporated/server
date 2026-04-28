@@ -76,17 +76,80 @@ install -m 0755 /tmp/uninc-files/sync-caddy.sh        /opt/uninc/sync-caddy.sh
 install -m 0644 /tmp/uninc-files/caddy-sync.service   /etc/systemd/system/caddy-sync.service
 install -m 0644 /tmp/uninc-files/caddy-sync.timer     /etc/systemd/system/caddy-sync.timer
 
+# Boot orchestration — runs the per-deployment startup-script metadata
+# at every boot, with output captured to syslog/serial/file. Replaces
+# google-startup-scripts.service from the GCP guest-agent we don't
+# install. See files/common/uninc-boot.{service,sh} for rationale.
+install -m 0755 /tmp/uninc-common/uninc-boot.sh        /opt/uninc/uninc-boot.sh
+install -m 0644 /tmp/uninc-common/uninc-boot.service   /etc/systemd/system/uninc-boot.service
+systemctl enable uninc-boot.service
+
+# Docker log driver = journald so `docker compose up` / container
+# stdout flows through journald → Cloud Ops Agent → Cloud Logging.
+# Default `json-file` writes to /var/lib/docker/containers/*.log which
+# Ops Agent doesn't tail by default — meaning a failed compose stack
+# would be invisible from the mothership. The `tag` keeps each
+# container's output queryable separately.
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'DOCKERD'
+{
+  "log-driver": "journald",
+  "log-opts": {
+    "tag": "{{.Name}}"
+  }
+}
+DOCKERD
+
 # Substitute the version pin into the compose file at build time so
 # every running container references the same tag the image was built
 # from. Avoids a separate env-var indirection at boot.
 sed -i "s/__UNINC_VERSION__/${UNINC_VERSION}/g" /opt/uninc/docker-compose.yml
 
+# ── Seal the image: no SSH on customer VMs ───────────────────
+# The proxy VM is a sealed compute unit. Once running, neither the
+# customer nor the operator who deployed it should be able to log in
+# and mutate the proxy binary, the chain on disk, or any other byte —
+# that's the transparency guarantee. Debug surfaces are limited by
+# design to the GCE serial console and Cloud Logging; if a class of
+# failure can't be diagnosed from those, the fix is more
+# instrumentation in the next release tag, not poking at running
+# state.
+#
+# We deliberately do NOT `apt purge openssh-server` here, because
+# Packer's own SSH session is what's running this script — purging
+# the package mid-build would kill the session before shutdown_command
+# can fire. Instead, we make sshd unable to function on customer VMs
+# by removing every prerequisite: host keys, authorized_keys, login-
+# capable users, and the systemd unit's enable state. The binary is
+# still on disk, but it has no keys to present, no users to admit,
+# and no unit to start it. That's cryptographically equivalent to
+# "no SSH" without breaking the build.
+#
+# Removed:
+#   - host keys: sshd refuses to start without them
+#   - /root/.ssh and any authorized_keys
+#   - packer user + home: created by cidata for the build, never
+#     belongs in a customer image (carrying packer:packer would be
+#     a ridiculous credential leak)
+#   - debian default user: shipped by Debian's generic cloud image,
+#     and cloud-init seeds an .ssh directory there at first boot
+#   - sshd enable state: masked so a fresh-boot sshd never starts
+rm -rf /etc/ssh/ssh_host_* /root/.ssh /home/packer /home/debian
+userdel -f packer 2>/dev/null || true
+userdel -f debian 2>/dev/null || true
+systemctl disable ssh.service ssh.socket 2>/dev/null || true
+systemctl mask ssh.service ssh.socket 2>/dev/null || true
+# Empty sshd_config so even if someone unmasks the unit, there's no
+# AllowUsers/PasswordAuth/PubkeyAuth that'd let them in.
+echo "# sealed image — sshd intentionally non-functional" > /etc/ssh/sshd_config
+chmod 0644 /etc/ssh/sshd_config
+
 # ── Cleanup so the snapshot is small + reproducible ──────────
 apt-get clean
-rm -rf /var/lib/apt/lists/* /tmp/uninc-files /root/.bash_history
+rm -rf /var/lib/apt/lists/* /tmp/uninc-files /tmp/uninc-common /root/.bash_history
 # Reset machine-id so cloned VMs get a fresh one at first boot.
 truncate -s 0 /etc/machine-id
 rm -f /var/lib/dbus/machine-id
 ln -s /etc/machine-id /var/lib/dbus/machine-id
 
-echo "install-proxy.sh: image baked for ${UNINC_VERSION}"
+echo "install-proxy.sh: image baked for ${UNINC_VERSION} (sealed: no sshd)"

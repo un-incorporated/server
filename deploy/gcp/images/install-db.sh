@@ -71,11 +71,43 @@ docker pull minio/mc:latest
 mkdir -p /opt/uninc /data/chain-storage
 chmod 0755 /opt/uninc
 
+# Boot orchestration — see files/common/uninc-boot.{service,sh}.
+install -m 0755 /tmp/uninc-common/uninc-boot.sh        /opt/uninc/uninc-boot.sh
+install -m 0644 /tmp/uninc-common/uninc-boot.service   /etc/systemd/system/uninc-boot.service
+systemctl enable uninc-boot.service
+
+# Docker journald log driver so chain-MinIO + customer-MinIO container
+# stdout reach Cloud Logging via Ops Agent. See install-proxy.sh for
+# the rationale.
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'DOCKERD'
+{
+  "log-driver": "journald",
+  "log-opts": {
+    "tag": "{{.Name}}"
+  }
+}
+DOCKERD
+
+# ── Seal the image: no SSH on customer VMs ───────────────────
+# See install-proxy.sh for the full rationale and the reason we don't
+# `apt purge openssh-server` (would kill Packer's own SSH session).
+# This DB image holds the chain-MinIO durability tier — exactly the
+# data an operator with SSH would be tempted to mutate — so the
+# sealing is non-negotiable here.
+rm -rf /etc/ssh/ssh_host_* /root/.ssh /home/packer /home/debian
+userdel -f packer 2>/dev/null || true
+userdel -f debian 2>/dev/null || true
+systemctl disable ssh.service ssh.socket 2>/dev/null || true
+systemctl mask ssh.service ssh.socket 2>/dev/null || true
+echo "# sealed image — sshd intentionally non-functional" > /etc/ssh/sshd_config
+chmod 0644 /etc/ssh/sshd_config
+
 # ── Cleanup ────────────────────────────────────────────────────
 apt-get clean
-rm -rf /var/lib/apt/lists/* /tmp/uninc-files /root/.bash_history
+rm -rf /var/lib/apt/lists/* /tmp/uninc-files /tmp/uninc-common /root/.bash_history
 truncate -s 0 /etc/machine-id
 rm -f /var/lib/dbus/machine-id
 ln -s /etc/machine-id /var/lib/dbus/machine-id
 
-echo "install-db.sh: image baked for ${UNINC_VERSION}"
+echo "install-db.sh: image baked for ${UNINC_VERSION} (sealed: no sshd)"

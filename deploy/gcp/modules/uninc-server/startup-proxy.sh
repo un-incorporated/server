@@ -1,18 +1,27 @@
 #!/bin/bash
-# startup-proxy.sh — runs on the proxy VM at first boot.
+# startup-proxy.sh — runs on the proxy VM at every boot via
+# uninc-boot.service. Output is already captured by the wrapper to
+# syslog (→ Cloud Logging), /var/log/uninc-boot.log, and /dev/console
+# (→ `gcloud compute instances get-serial-port-output`). All this
+# script needs to do is emit phase markers so an operator can pick out
+# where a boot succeeded or failed in the log stream.
 #
 # Config-only. Docker, the proxy/nats/pgbouncer/caddy images, and the
 # static compose YAML/Caddy template are already on the disk — they
 # were baked into the `uninc-proxy` GCE image at release time. See
 # server/deploy/gcp/images/install-proxy.sh.
 #
-# This script just renders the per-deployment files (proxy.yml,
-# .env, pgbouncer configs, Caddyfile) and starts the compose stack.
 # No apt, no curl, no docker pull. The VM has no internet egress
 # guarantee at boot.
 set -euo pipefail
 
+phase() { echo "[startup-proxy phase] $*"; }
+trap 'phase "FAILED at line $LINENO with exit $?"' ERR
+
+phase "begin"
+
 # ── Per-deployment config from Terraform vars ──────────────────
+phase "render-config"
 mkdir -p /etc/uninc /opt/uninc/pgbouncer /etc/caddy /data/chains \
    /data/caddy /data/caddy-config
 
@@ -123,6 +132,7 @@ sed -e "s#__CADDY_EMAIL__#${admin_email}#" \
     -e "s#__CADDY_UPSTREAM__#localhost:1#" \
     /etc/caddy/Caddyfile.template > /etc/caddy/Caddyfile
 
+phase "enable-caddy-sync"
 # Activate the caddy-sync systemd timer (units already in /etc/systemd
 # from the image bake).
 systemctl daemon-reload
@@ -131,8 +141,10 @@ systemctl enable --now caddy-sync.timer
 # ── Start the compose stack ────────────────────────────────────
 # /opt/uninc/docker-compose.yml is already on disk from the image
 # bake, with image tags rewritten to this release's UNINC_VERSION.
+phase "compose-up"
 cd /opt/uninc
 docker compose up -d
+phase "compose-up-done"
 
 %{ if contains(databases, "mongodb") }
 # rs.initiate after all DB VMs are up. mongosh ships in the mongo
@@ -144,3 +156,5 @@ docker compose up -d
 # does not include mongosh, so the rs.initiate is moved to the
 # primary DB VM's startup-db.sh in the bake split.
 %{ endif }
+
+phase "done"

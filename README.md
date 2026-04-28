@@ -198,6 +198,8 @@ flow in [RELEASES.md](RELEASES.md).
 | Browser verifier | Rust → WebAssembly — same hash code as the server |
 | Queue | NATS JetStream |
 | VM images | Packer-baked disk images per role (`uninc-proxy`, `uninc-db`, `uninc-observer`) — Docker, every container image, and the static compose YAML pre-installed so customer VMs need zero internet egress at first boot. Distributed via GitHub Releases as `uninc-{role}-vX-Y-Z.tar.gz` (each containing a bootable `disk.raw`); no cloud-vendor registry. See [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md). |
+| VM boot | `uninc-boot.service` — a small open-source systemd unit that replaces `google-startup-scripts.service` so we can stay off Google's closed-source guest-agent package. Tees boot output to syslog, serial console, and `/var/log/uninc-boot.log` for debug. See [ARCHITECTURE.md §VM boot orchestration](ARCHITECTURE.md#vm-boot-orchestration). |
+| Sealed VMs | Customer VMs ship without functional sshd — host keys deleted, `sshd_config` stubbed, the systemd unit masked, and the build-time `packer` + default `debian` users removed. Permanent, not a v0.1 simplification: the protocol's tamper-evidence claim depends on the operator being unable to mutate the chain or the proxy via shell. Debug is via GCE serial console, Cloud Logging, and (last resort) read-only disk-detach inspection — see [docs/ops-debugging.md](docs/ops-debugging.md) and [ARCHITECTURE.md §Sealed-VM trust model](ARCHITECTURE.md#sealed-vm-trust-model). |
 | IaC | Terraform (GCP shipping; AWS and bare-metal are placeholders) |
 
 Full dependency rationale: [TECHSTACK.md](TECHSTACK.md).
@@ -240,6 +242,7 @@ The deployment chain (no personal data) retains indefinitely. Per-user chains re
 | [QUICKSTART.md](QUICKSTART.md) | 5-minute Docker Compose walkthrough |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Runtime data paths, trust boundaries, deployment shapes, verification taxonomy |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Build, test, and run from source |
+| [docs/ops-debugging.md](docs/ops-debugging.md) | Operator runbook for debugging a broken deployment — serial console, Cloud Logging, and the `uninc-debug-ssh-keys` SSH escape hatch |
 | [RELEASES.md](RELEASES.md) | The three release artifacts (WASM, Terraform module, Docker images), how releases are cut, and how consumers pin versions |
 | [TECHSTACK.md](TECHSTACK.md) | Every dependency, what we hand-roll |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to send a change |

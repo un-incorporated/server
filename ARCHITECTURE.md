@@ -1120,6 +1120,53 @@ Upstream ports (the proxy's dial target for the real primitive) are still config
 
 ---
 
+## VM boot orchestration
+
+Customer VMs run a vanilla Debian 12 cloud image with **no Google guest agent installed**. The trade-off is deliberate: the agent is closed-source and GCE-specific, but the per-role baked images are also meant to boot under KVM/Proxmox/bare-metal where the agent is meaningless. We re-implement the one piece of the agent we actually need — running the per-deployment startup script — with a tiny systemd unit baked into every image.
+
+| Component | Lives in | Purpose |
+|---|---|---|
+| `uninc-boot.service` | baked image (`/etc/systemd/system/`) | systemd one-shot, fires after `network-online.target` and `docker.service`, runs on every boot. |
+| `uninc-boot.sh` | baked image (`/opt/uninc/`) | Wrapper. Tees its stdout/stderr to `/var/log/uninc-boot.log`, syslog (→ Cloud Logging via Ops Agent), and `/dev/console` (→ `gcloud compute instances get-serial-port-output`). Fetches the per-deployment script from the GCE metadata server (or `/etc/uninc/boot-config.sh` on non-GCE hosts) and execs it. |
+| `startup-{proxy,db,observer}.sh` | Terraform-rendered, set as `startup-script` instance metadata | Per-deployment config render + `docker compose up -d`. Emits `[startup-{role} phase] <name>` markers at every state transition so an operator can grep boot logs for the failure point. Also has an `ERR` trap that prints the failing line + exit code. |
+
+---
+
+## Sealed-VM trust model
+
+**Customer VMs do not have working SSH.** This is a permanent product property, not a v0.1 simplification. It is the load-bearing assumption behind the protocol's tamper-evidence claim.
+
+The pitch vs every other database audit tool (pgaudit, CloudTrail, Google Access Transparency, the DAM category) is that the operator who ran the deployment cannot tamper with the chain *or* with the proxy that produces it. The moment SSH exists, that guarantee evaporates: an operator with shell access can `echo forged >> /data/chains/...`, swap the proxy binary for a forwarding-only build, or quietly disable the audit gate. The verification proxy becomes "trust us" with extra steps — exactly the category of guarantee we are trying to do better than.
+
+The image build (`install-{proxy,db,observer}.sh`) seals each VM by removing every prerequisite for sshd to admit a login:
+
+| Removed | Effect |
+|---|---|
+| `/etc/ssh/ssh_host_*` | sshd refuses to start without host keys. |
+| `/etc/ssh/sshd_config` (overwritten with a stub) | Even if the unit were unmasked, no `AllowUsers`/`PasswordAuthentication`/`PubkeyAuthentication` directives exist. |
+| `ssh.service` + `ssh.socket` (`systemctl mask`) | systemd refuses to start the unit at all. |
+| `packer` user (build-time only) | Removed — carrying `packer:packer` into customer images would be a credential leak. |
+| `debian` default user | Removed — Debian's generic cloud image creates this user and cloud-init seeds an `.ssh/` for it at first boot. |
+| `/root/.ssh/` | No `authorized_keys` for any user. |
+
+We deliberately do NOT `apt purge openssh-server`, because Packer's own SSH session is the channel running the install script — purging mid-build would kill the session before `shutdown_command` could fire. The package binary is still on disk, but with no host keys, no users, no config, and a masked unit, sshd has nothing to bind to and nobody to admit. That is cryptographically equivalent to "no SSH" without breaking the build.
+
+We also do NOT install `google-guest-agent`, the GCP package that would re-introduce SSH key sync (along with OS Login, account daemon, MTU tweaks, and clock-skew sync) — all of which conflict with the sealed model.
+
+### Debug surfaces under the sealed model
+
+The trust model means there are exactly three legitimate ways to inspect a customer VM:
+
+1. **GCE serial console** (`gcloud compute instances get-serial-port-output`) — works even when nothing on the VM is reachable. Sees every byte that uninc-boot.sh + the startup script wrote, plus kernel + systemd output.
+2. **Cloud Logging via Ops Agent** — journald (which captures everything tagged `uninc-boot`, plus container stdout via Docker's journald log driver) ships to Cloud Logging, queryable across deployments and persistent past VM teardown.
+3. **Disk-detach inspection** (last resort) — stop the VM, detach the disk, attach it read-only to a separate debug VM, mount, inspect. Visible in the GCP audit log so the seal isn't silently broken. Only justified when the first two surfaces aren't enough.
+
+What we will never add: a `/diag` endpoint, a remote-shell tunnel, a "debug-ssh-keys" metadata escape hatch, or any other backdoor — even gated by JWT or operator-only auth. Each of those is the SSH hole reintroduced under a different name.
+
+The full operator runbook lives in [docs/ops-debugging.md](docs/ops-debugging.md).
+
+---
+
 ## Docker images
 
 Published to `ghcr.io/un-incorporated/`:
@@ -1158,4 +1205,5 @@ Pick the recipe for your target, run its setup, and you have a working Unincorpo
 | [docs/identity-separation.md](docs/identity-separation.md) | Admin vs app classification, multi-signal detection, behavioral fingerprinting |
 | [docs/transparency-view-ui-spec.md](docs/transparency-view-ui-spec.md) | UI spec for frontends reading `:9091`: per-user access view, org/deployment view, embeddable badge, WASM verification, notification settings |
 | [docs/chain-api.md](docs/chain-api.md) | Chain API v1 contract: endpoints, auth, pagination, error codes |
+| [docs/ops-debugging.md](docs/ops-debugging.md) | Operator runbook: how to debug a broken deployment via serial console, Cloud Logging, and the `uninc-debug-ssh-keys` escape hatch — without `google-guest-agent` |
 | [deploy/](deploy/) | Deployment recipes: GCP (shipping), AWS and bare-metal (placeholders) |

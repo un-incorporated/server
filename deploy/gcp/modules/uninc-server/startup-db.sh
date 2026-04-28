@@ -1,5 +1,7 @@
 #!/bin/bash
-# startup-db.sh — runs on each DB VM at first boot.
+# startup-db.sh — runs on each DB VM at every boot via uninc-boot.sh.
+# Output is captured by the wrapper to syslog/serial/file — see
+# startup-proxy.sh for the rationale.
 #
 # Config-only. Postgres 16, MongoDB 8.0, Docker, and the MinIO image
 # are already on the disk — they were baked into the `uninc-db` GCE
@@ -12,7 +14,13 @@
 # is not available.
 set -euo pipefail
 
+phase() { echo "[startup-db phase] $*"; }
+trap 'phase "FAILED at line $LINENO with exit $?"' ERR
+
+phase "begin"
+
 # ── Postgres ──────────────────────────────────────────────────
+phase "postgres-config"
 PG_CONF="/etc/postgresql/16/main/postgresql.conf"
 PG_HBA="/etc/postgresql/16/main/pg_hba.conf"
 
@@ -49,11 +57,13 @@ HBA
 systemctl enable postgresql
 
 if [ "${is_primary}" = "true" ]; then
+   phase "postgres-init-primary"
    systemctl start postgresql
    sudo -u postgres psql -c "CREATE USER ${db_user} WITH PASSWORD '${db_password}' REPLICATION SUPERUSER;"
    sudo -u postgres psql -c "CREATE DATABASE ${db_name} OWNER ${db_user};"
    sudo -u postgres psql -d ${db_name} -c "CREATE PUBLICATION uninc_observer_pub FOR ALL TABLES;"
 else
+   phase "postgres-base-backup"
    # Replica — base-backup from primary
    rm -rf /var/lib/postgresql/16/main/*
    sudo -u postgres pg_basebackup \
@@ -65,6 +75,7 @@ else
 fi
 
 # ── chain-MinIO sidecar (every replica VM) ────────────────────
+phase "chain-minio-up"
 # Stores the uninc-chain bucket for quorum-replicated chain data via
 # chain-engine's MultiReplicaStorage.
 systemctl enable --now docker
@@ -92,6 +103,7 @@ docker run --rm --network host \
 
 # ── MongoDB (if selected) ────────────────────────────────────
 %{ if contains(databases, "mongodb") }
+phase "mongo-config"
 echo "${mongo_password}" | openssl dgst -sha256 -binary | base64 > /etc/mongo-keyfile
 chmod 400 /etc/mongo-keyfile
 chown mongodb:mongodb /etc/mongo-keyfile
@@ -136,6 +148,7 @@ mongosh --port 27017 --eval '
 
 # ── Customer MinIO (if selected) ──────────────────────────────
 %{ if contains(databases, "s3") }
+phase "customer-minio-up"
 mkdir -p /data/customer-minio
 docker rm -f customer-minio 2>/dev/null || true
 docker run -d \
@@ -158,3 +171,5 @@ docker run --rm --network host \
    minio/mc:latest mb --ignore-existing local/uploads || true
 %{ endif }
 %{ endif }
+
+phase "done"

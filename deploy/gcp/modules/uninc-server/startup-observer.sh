@@ -1,5 +1,7 @@
 #!/bin/bash
-# startup-observer.sh — runs on the observer VM at first boot.
+# startup-observer.sh — runs on the observer VM at every boot via
+# uninc-boot.sh. Output is captured by the wrapper to syslog/serial/
+# file; see startup-proxy.sh for rationale.
 #
 # Config-only. Docker, the observer container, and the static compose
 # YAML are already on the disk — they were baked into the
@@ -11,6 +13,11 @@
 # Cloud NAT — internet egress is not available.
 set -euo pipefail
 
+phase() { echo "[startup-observer phase] $*"; }
+trap 'phase "FAILED at line $LINENO with exit $?"' ERR
+
+phase "begin"
+phase "render-config"
 mkdir -p /etc/uninc /opt/uninc
 
 cat > /etc/uninc/observer.yml <<OBSEOF
@@ -49,6 +56,8 @@ ENVEOF
 chmod 600 /opt/uninc/.env
 
 # /opt/uninc/docker-compose.yml is already on disk from the image bake.
+phase "compose-up"
 systemctl enable --now docker
 cd /opt/uninc
 docker compose up -d
+phase "done"

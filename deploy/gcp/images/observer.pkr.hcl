@@ -61,12 +61,18 @@ build {
 
   # See proxy.pkr.hcl for why we mkdir before the file upload.
   provisioner "shell" {
-    inline = ["mkdir -p /tmp/uninc-files"]
+    inline = ["mkdir -p /tmp/uninc-files /tmp/uninc-common"]
   }
 
   provisioner "file" {
     source      = "${path.root}/files/observer/"
     destination = "/tmp/uninc-files/"
+  }
+
+  # Common boot-orchestration files shared by every role.
+  provisioner "file" {
+    source      = "${path.root}/files/common/"
+    destination = "/tmp/uninc-common/"
   }
 
   # See proxy.pkr.hcl for why we use `sudo env {{.Vars}}` instead of

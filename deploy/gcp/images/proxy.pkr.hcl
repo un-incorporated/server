@@ -88,13 +88,13 @@ source "qemu" "proxy" {
 build {
   sources = ["source.qemu.proxy"]
 
-  # Pre-create the destination — Packer's file provisioner with a
+  # Pre-create the destinations — Packer's file provisioner with a
   # trailing-slash source uploads *contents* into an *existing* dir on
   # the target. A fresh Debian VM doesn't have /tmp/uninc-files/ yet,
   # so without this scp fails with "Is a directory" (which actually
   # means "the parent doesn't exist as a directory").
   provisioner "shell" {
-    inline = ["mkdir -p /tmp/uninc-files"]
+    inline = ["mkdir -p /tmp/uninc-files /tmp/uninc-common"]
   }
 
   # Stage static files into the builder VM at /tmp/uninc-files where
@@ -102,6 +102,14 @@ build {
   provisioner "file" {
     source      = "${path.root}/files/proxy/"
     destination = "/tmp/uninc-files/"
+  }
+
+  # Common boot-orchestration files shared by every role
+  # (uninc-boot.service + uninc-boot.sh — the open-source replacement
+  # for google-startup-scripts.service).
+  provisioner "file" {
+    source      = "${path.root}/files/common/"
+    destination = "/tmp/uninc-common/"
   }
 
   # `sudo -E` doesn't preserve arbitrary environment variables under

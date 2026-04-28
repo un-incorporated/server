@@ -54,9 +54,9 @@ into its own GCP project on first deploy of each release tag (see
 
 | Role | Pre-installed | Pre-pulled images |
 |---|---|---|
-| `uninc-proxy` | Cloud Ops Agent, Docker (official APT repo) | `proxy:vX.Y.Z`, `nats:2.10-alpine`, `edoburu/pgbouncer:1.22.1-p0`, `caddy:2.8-alpine` |
-| `uninc-db` | Cloud Ops Agent, Postgres 16 (PGDG), MongoDB 8.0, Docker | `minio/minio:latest`, `minio/mc:latest` |
-| `uninc-observer` | Cloud Ops Agent, Docker | `observer:vX.Y.Z` |
+| `uninc-proxy` | Cloud Ops Agent, Docker (official APT repo), `uninc-boot.service` | `proxy:vX.Y.Z`, `nats:2.10-alpine`, `edoburu/pgbouncer:1.22.1-p0`, `caddy:2.8-alpine` |
+| `uninc-db` | Cloud Ops Agent, Postgres 16 (PGDG), MongoDB 8.0, Docker, `uninc-boot.service` | `minio/minio:latest`, `minio/mc:latest` |
+| `uninc-observer` | Cloud Ops Agent, Docker, `uninc-boot.service` | `observer:vX.Y.Z` |
 
 Plus per-role static configs baked at known paths — the docker-compose
 YAML, the NATS conf, the Caddyfile template, the Caddy sync timer +
@@ -69,6 +69,53 @@ upstream) are NEVER in the image. They reach the VM at boot via GCE
 instance metadata and are written into `/etc/uninc/proxy.yml`,
 `/opt/uninc/.env`, `/opt/uninc/pgbouncer/pgbouncer.ini` etc. by the
 deployment-time startup script (`deploy/gcp/modules/uninc-server/startup-proxy.sh`).
+
+### Boot orchestration: `uninc-boot.service`
+
+The image boots from a vanilla Debian 12 cloud image with **no Google
+guest agent installed**. Without `google-guest-agent`, the
+`startup-script` instance metadata key would normally be ignored —
+nothing on the VM polls for it. We re-implement that one feature
+ourselves with `uninc-boot.service` (a small systemd one-shot baked
+into every image) that:
+
+1. Fires after `network-online.target` and `docker.service`.
+2. Tees its stdout/stderr to `/var/log/uninc-boot.log`, syslog (→
+   journald → Cloud Logging via Ops Agent), and `/dev/console` (→
+   `gcloud compute instances get-serial-port-output`).
+3. Fetches the `startup-script` from `metadata.google.internal` via
+   plain HTTP with the `Metadata-Flavor: Google` header (no SDK, no
+   agent, no auth).
+4. Falls back to `/etc/uninc/boot-config.sh` on non-GCE hosts (KVM,
+   Proxmox, bare metal) where the metadata server doesn't exist.
+5. Execs the script.
+
+Source: [`files/common/uninc-boot.{service,sh}`](files/common/).
+Rationale and the deliberate omission of `google-guest-agent`:
+[ARCHITECTURE.md §VM boot orchestration](../../../ARCHITECTURE.md#vm-boot-orchestration).
+
+### Sealing: customer VMs have no functional sshd
+
+The last step of every install script removes every prerequisite for
+sshd to admit a login on customer VMs:
+
+- Host keys deleted from `/etc/ssh/`.
+- `sshd_config` overwritten with a stub (no auth methods enabled).
+- `ssh.service` and `ssh.socket` masked via `systemctl mask`.
+- The `packer` user (built only for the Packer SSH session) and the
+  `debian` default user (shipped by the base cloud image) are
+  removed via `userdel`. Their home directories are wiped.
+
+The `openssh-server` package itself stays on disk because Packer's
+own build session is the SSH channel running these install scripts;
+purging mid-build kills `shutdown_command`. With no host keys, no
+users, no config, and a masked unit, sshd has nothing to bind to and
+nobody to admit even if the binary were somehow invoked.
+
+This is permanent and load-bearing — see
+[ARCHITECTURE.md §Sealed-VM trust model](../../../ARCHITECTURE.md#sealed-vm-trust-model)
+for why, and [`docs/ops-debugging.md`](../../../docs/ops-debugging.md)
+for how to debug deployments without SSH.
 
 ## Layout
 
@@ -84,6 +131,9 @@ deploy/gcp/images/
 │   ├── meta-data       Cloud-init seed for the qemu build VM
 │   └── user-data       (creates a `packer` user with sudo)
 └── files/
+    ├── common/         Shared by every role (boot orchestration)
+    │   ├── uninc-boot.service
+    │   └── uninc-boot.sh
     ├── proxy/          Static files baked into uninc-proxy
     │   ├── docker-compose.yml
     │   ├── nats.conf
@@ -95,9 +145,10 @@ deploy/gcp/images/
         └── docker-compose.yml
 ```
 
-`uninc-db` doesn't carry static files today — Postgres + Mongo configs
-are wholly per-deployment and rendered at boot by `startup-db.sh`. If
-a future change needs deployment-agnostic config there, add `files/db/`.
+`uninc-db` doesn't carry role-specific static files today — Postgres +
+Mongo configs are wholly per-deployment and rendered at boot by
+`startup-db.sh`. If a future change needs deployment-agnostic config
+there, add `files/db/`.
 
 ## Building locally
 

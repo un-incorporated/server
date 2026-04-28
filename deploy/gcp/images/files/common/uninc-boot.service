@@ -1,0 +1,34 @@
+[Unit]
+# uninc-boot — first-boot orchestration for un-incorporated VMs.
+#
+# Replaces google-startup-scripts.service from the GCP guest-agent
+# package. We don't install the guest-agent because (a) the disk image
+# is meant to be portable to KVM/Proxmox/bare-metal, not GCE-only, and
+# (b) the agent ships a lot of behavior (SSH key sync, OS Login,
+# account daemon, MTU tweaks) we neither need nor want on customer VMs.
+#
+# Behavior: at every boot, fetch the per-deployment startup script from
+# the GCE metadata server (or /etc/uninc/boot-config.sh on non-GCE
+# hosts) and execute it. All output is captured to syslog, the serial
+# console, and /var/log/uninc-boot.log so an operator can debug a
+# failed boot via `gcloud compute instances get-serial-port-output`
+# without ever needing SSH.
+Description=un-incorporated first-boot orchestration
+After=network-online.target docker.service cloud-init.target
+Wants=network-online.target
+# Runs on every boot, not just first boot — the script's actions
+# (write config files, docker compose up -d) are idempotent and
+# matching the GCE google-startup-scripts.service contract reduces
+# surprise.
+
+[Service]
+Type=oneshot
+ExecStart=/opt/uninc/uninc-boot.sh
+RemainAfterExit=yes
+# Don't fail the boot if the metadata script returns non-zero — leave
+# the VM up so an operator can SSH (if they injected a debug-ssh-key)
+# and inspect. The serial-console log will record the failure.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

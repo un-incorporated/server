@@ -169,4 +169,20 @@ The observer crate (`crates/observer/`) uses the same workspace dependencies plu
 
 The Packer configs live under [`deploy/gcp/images/`](deploy/gcp/images/) and run in CI from [`release-images.yml`](.github/workflows/release-images.yml). See [`deploy/gcp/images/README.md`](deploy/gcp/images/README.md) for why we bake VM images at all (private-subnet VMs without Cloud NAT cannot reach apt mirrors or container registries at first boot, so every byte must be in the image).
 
+### What we explicitly DO NOT install (or actively remove) in the image
+
+| Package | Why it's out |
+|---------|--------------|
+| `google-guest-agent` / `google-compute-engine` / `google-osconfig-agent` | These are GCE-specific and closed-source. The disk image is meant to boot under KVM/Proxmox/bare-metal as well as GCE, and the agent's full surface (SSH key sync, OS Login, MTU tweaks, account daemon, clock skew, Windows installer hooks) is far more than we want running on customer VMs. The one piece we need — executing the `startup-script` instance metadata at boot — we re-implement in 100 lines of bash + a systemd unit (`uninc-boot.service` + `uninc-boot.sh`), with output captured to syslog/serial/file. See [ARCHITECTURE.md §VM boot orchestration](ARCHITECTURE.md#vm-boot-orchestration). |
+| `cloud-init`'s GCE-specific datasource | The base Debian cloud image's stock cloud-init handles the generic boot path (filesystem grow, locale, etc.). Our per-deployment config is rendered by `uninc-boot.sh` from instance metadata, not by cloud-init userdata, so we don't need or want the GCE datasource module that ships with `cloud-init-base`. |
+| `openssh-server` (sealed) | The package binary stays on disk so Packer's own build SSH session can complete and `shutdown_command` can fire — purging mid-build kills the channel. But the install script removes every prerequisite for sshd to admit a login on the customer VM: host keys deleted, `sshd_config` overwritten with a stub, `ssh.service`/`ssh.socket` masked, and the `packer` and `debian` users removed. This is permanent and load-bearing on the protocol's tamper-evidence claim — see [ARCHITECTURE.md §Sealed-VM trust model](ARCHITECTURE.md#sealed-vm-trust-model). |
+
+The Cloud Ops Agent (`google-cloud-ops-agent`) IS installed because it has a clean separation: it ships logs and metrics outbound but exposes no inbound surface, has no implicit privilege over the host beyond reading journald + metrics, and works the same on KVM (where Cloud Logging is just unreachable and the agent silently no-ops).
+
+### Why no SSH escape hatch even for ops debugging
+
+Almost every other distributed system / dev tool ships with SSH access for the operator. We deliberately don't, and won't, even gated by JWT or one-shot keys. The reason: the operator is exactly who the protocol is supposed to be tamper-evident *against*. SSH access — whether via metadata key sync, a `/diag` endpoint, a remote-shell tunnel, or any other channel — re-introduces a path for the operator to mutate the chain on disk, swap the proxy binary, or quietly disable the audit gate. That's the failure mode we're trying to do better than pgaudit, CloudTrail, and Google Access Transparency on. Once we ship a backdoor for "just debugging," the differentiator is gone.
+
+Debugging without SSH is harder but not impossible — see [docs/ops-debugging.md](docs/ops-debugging.md) for the three legitimate surfaces (serial console, Cloud Logging, disk-detach read-only inspection). When those aren't enough for a class of failure, the fix is more instrumentation in the next release tag, not new ways into a running VM.
+
 The observer does NOT use `pgwire-replication` in v1 — it polls via SQL instead of streaming via the replication protocol. This is simpler (standard SQL, no binary pgoutput parsing) with 1-second latency, which is acceptable for operation-level comparison. Streaming replication is a future upgrade for sub-second latency if needed.
