@@ -23,6 +23,8 @@ The closest prior art is Google's Access Transparency — proprietary, GCP-only,
 
 **AGPLv3. Pre-1.0.** The protocol draft is stable enough to implement against; this implementation is still moving. See [Status](#status) before deploying in front of production data.
 
+> **Don't want to operate the server yourself?** A managed [Customer-verifiable Data Access Transparency](https://unincorporated.app) deployment is available at [unincorporated.app](https://unincorporated.app) — same protocol, same browser-side WASM verifier, same chain format; the operator runs the proxy, replicas, and Observer VM for you on GCP. Self-hosting and the managed tier are interoperable: a chain produced by either is verifiable by the other.
+
 ---
 
 ## Table of contents
@@ -151,7 +153,7 @@ Walkthroughs:
 - [docs/self-hosting.md](docs/self-hosting.md) — all three Compose shapes step-by-step, with `uninc.yml` requirements, the `+1000` port shift, and an authoritative port map. Also rendered at [unincorporated.app/docs/self-host](https://unincorporated.app/docs/self-host) (synced hourly from this file).
 - [deploy/gcp/images/README.md](deploy/gcp/images/README.md) — per-role baked disk images (`uninc-proxy`, `uninc-db`, `uninc-observer`) for production deploys. Single attestable artifact per release, no first-boot egress, byte-identical between self-hosters and the managed tier. Rendered at [unincorporated.app/#self-host-guide](https://unincorporated.app/#self-host-guide).
 
-A managed deployment of shape 3 (multi-VM with Observer) is available at [unincorporated.app](https://unincorporated.app) if you don't want to run it yourself.
+A managed [Data Access Transparency deployment](https://unincorporated.app) of shape 3 (multi-VM with Observer) is available at [unincorporated.app](https://unincorporated.app) if you don't want to run it yourself.
 
 ## What a release contains
 
