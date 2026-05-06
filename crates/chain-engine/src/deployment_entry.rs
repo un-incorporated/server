@@ -1,6 +1,6 @@
 //! Deployment chain entry construction helpers.
 //!
-//! Per Uninc Access Transparency v1 §3.1 and §4.11, deployment-chain
+//! Per Data Access Transparency v1 §3.1 and §4.11, deployment-chain
 //! entries carry `DeploymentEvent` payloads inside the same binary envelope
 //! (§4.1) used for per-user chains. A `DeploymentChainEntry` is therefore
 //! just a `chain_store::ChainEntry` whose payload type is `0x02`.

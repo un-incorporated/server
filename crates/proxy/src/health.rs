@@ -88,7 +88,7 @@ struct HealthStateInner {
     /// Observer base URL + read-secret. When both are populated the `/health`
     /// handler includes an `observer` block in its response, carrying the
     /// result of an active probe of `${observer_url}/observer/chain/deployment/head`.
-    /// `None` in single-host / Playground topologies with no observer; the
+    /// `None` in single-host topologies with no observer; the
     /// block is omitted in that case.
     observer_url: Option<String>,
     observer_read_secret: Option<String>,
@@ -368,7 +368,7 @@ impl FromRequestParts<HealthState> for HealthJwt {
 
 /// `GET /health` — open, stable for LB / uptime checks. Returns
 /// `{"status":"ok"}` plus an `observer` block when the deployment has an
-/// observer configured (single-host / Playground topologies omit it
+/// observer configured (single-host topologies omit it
 /// entirely). Status is always 200 — the observer's state is reported in
 /// the body, never via a non-200 status, so an LB that only looks at HTTP
 /// status still treats a reachable proxy as healthy even when the observer

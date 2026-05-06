@@ -869,7 +869,7 @@ None of v1 is Byzantine fault tolerant in the academic sense — no quorum vote,
 Two orthogonal trust axes fall out of this table:
 
 - **"Are the stored entries well-formed?"** — #1 is the only verification an end user can run themselves. The server cannot fake a passing WASM result because the WASM runs in the user's browser, not on our infrastructure.
-- **"Did the proxy log what the databases actually did?"** — only #4 covers this. #2 and #3 catch a *single* rogue replica, but they are useless against a proxy that writes the same forged history to every replica. Only the Observer has an input (native replication streams) the proxy doesn't control. Row #4 is wired as of the observer-comparison shipment: the scheduled verification task (`crates/verification/src/task.rs::run_scheduled_verification` step 4) fetches the Observer's deployment-chain head every run and byte-compares it to the proxy's baseline, emitting `verification_failure` on mismatch per UAT §3.3.
+- **"Did the proxy log what the databases actually did?"** — only #4 covers this. #2 and #3 catch a *single* rogue replica, but they are useless against a proxy that writes the same forged history to every replica. Only the Observer has an input (native replication streams) the proxy doesn't control. Row #4 is wired as of the observer-comparison shipment: the scheduled verification task (`crates/verification/src/task.rs::run_scheduled_verification` step 4) fetches the Observer's deployment-chain head every run and byte-compares it to the proxy's baseline, emitting `verification_failure` on mismatch per the Data Access Transparency spec §3.3.
 
 ### #3 expanded — why per-primitive algorithms differ
 

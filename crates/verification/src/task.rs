@@ -1,6 +1,6 @@
-//! Scheduled Verification task — runs once per **Tick** (UAT §5.5).
+//! Scheduled Verification task — runs once per **Tick** (the Data Access Transparency spec §5.5).
 //!
-//! Terminology aligned with UAT §5.5:
+//! Terminology aligned with the Data Access Transparency spec §5.5:
 //!
 //! - A **Tick** is the moment a Scheduled Verification is triggered. Two
 //!   trigger sources race through a `tokio::select!`:
@@ -10,17 +10,17 @@
 //!       fires whenever an admin session closes; `notify_one`-coalesced.
 //!
 //! - **Scheduled Verification** is the work that runs on each Tick.
-//!   Per UAT §5.5 it runs TWO processes:
+//!   Per the Data Access Transparency spec §5.5 it runs TWO processes:
 //!
 //!     **Process 1 — Per-user chain cross-replica verification**
-//!     (UAT §5.5.1). For each chain in `{deployment} ∪ {active
+//!     (the Data Access Transparency spec §5.5.1). For each chain in `{deployment} ∪ {active
 //!     per-user chains}`, read `(entry_count, head_hash)` from every
 //!     replica, compare to a baseline replica, and fire the failure
 //!     handler on any divergence. Head-hash equality under identical
 //!     `entry_count` is the invariant.
 //!
 //!     **Process 2 — Deployment chain observer-proxy verification**
-//!     (UAT §5.5.2). Walk the proxy's deployment-chain
+//!     (the Data Access Transparency spec §5.5.2). Walk the proxy's deployment-chain
 //!     `ObservedDeploymentEvent`-projectable entries and the
 //!     observation chain's `ObservedDeploymentEvent` entries in
 //!     lockstep from their persisted cursors. On byte-matching
@@ -151,7 +151,7 @@ pub struct ScheduledVerificationReport {
 /// deployment chain (counting every entry, not just projectable
 /// ones); `cursor_obs` is the index into the observation chain.
 ///
-/// See UAT §5.5.2: both cursors advance monotonically; they are NOT
+/// See the Data Access Transparency spec §5.5.2: both cursors advance monotonically; they are NOT
 /// advanced when a byte-mismatch is detected, so the next Tick
 /// re-observes the same mismatch unless the divergent entry has been
 /// redressed.
@@ -182,7 +182,7 @@ pub async fn run_scheduled_verification(
     cursors: &RwLock<Process2Cursors>,
     // Process 2 (§5.5.2) proxy-side chain reader — used to pull the
     // proxy's deployment chain entries for projection. `None` disables
-    // Process 2 (legacy test harnesses / Playground with no local
+    // Process 2 (legacy test harnesses / single-host with no local
     // chain store).
     proxy_chain: Option<Arc<dyn ProxyChainReader>>,
     // Deployment salt — HMAC key used by `project_to_observed` to
@@ -211,7 +211,7 @@ pub async fn run_scheduled_verification(
     let active_sessions = engine.active_session_count().await;
     let sessions_checked = total_sessions.saturating_sub(active_sessions);
 
-    // 3. Process 1 — per-user chain cross-replica verification (UAT
+    // 3. Process 1 — per-user chain cross-replica verification (Data Access Transparency
     //    §5.5.1). For each chain in {deployment} ∪ {per-user chains},
     //    pick one replica's head as baseline and verify every other
     //    replica matches it. Any divergence goes into
@@ -222,7 +222,7 @@ pub async fn run_scheduled_verification(
     //    Chain enumeration: the deployment chain is hard-coded; per-
     //    user chain IDs come from the proxy's local chain-store via
     //    `proxy_chain.list_chain_ids()`. If no proxy reader is wired
-    //    (Playground / tests), Process 1 runs against the deployment
+    //    (single-host / tests), Process 1 runs against the deployment
     //    chain only and logs that per-user iteration was skipped.
     //
     //    Scope note (v0.1-pre): today Process 1 verifies EVERY chain
@@ -306,13 +306,13 @@ pub async fn run_scheduled_verification(
     }
 
     // 4. Process 2 — deployment-chain observer-proxy entry walk
-    //    (UAT §5.5.2). Walk the proxy's deployment chain and the
+    //    (the Data Access Transparency spec §5.5.2). Walk the proxy's deployment chain and the
     //    observation chain from their persisted cursors in lockstep;
     //    advance both cursors on each byte-match; stop on first
     //    mismatch and fire the failure handler.
     //
     //    Skips when:
-    //      - no observer is configured (single-host / Playground), OR
+    //      - no observer is configured (single-host), OR
     //      - no proxy-chain reader was passed (legacy test harness).
     //
     //    The tail on whichever side is longer stays unverified —
@@ -372,7 +372,7 @@ pub async fn run_scheduled_verification(
     } else if observer.is_none() {
         info!("no observer configured — skipping Process 2");
     } else {
-        info!("no proxy chain reader — skipping Process 2 (Playground / test)");
+        info!("no proxy chain reader — skipping Process 2 (single-host / test)");
     }
     let observer_compared = proc2.compared;
     let observer_divergent = proc2.divergent;
@@ -587,7 +587,7 @@ async fn fetch_observer_head_with_retry(
     }
 }
 
-// ─── Process 1 (UAT §5.5.1) ────────────────────────────────────────────
+// ─── Process 1 (the Data Access Transparency spec §5.5.1) ────────────────────────────────────────────
 
 /// Outcome of one chain's cross-replica head-hash comparison. Used by
 /// Process 1 to iterate over `{deployment} ∪ {per-user chains}` and
@@ -659,7 +659,7 @@ async fn verify_chain_cross_replica(
     }
 }
 
-// ─── Process 2 (UAT §5.5.2) ────────────────────────────────────────────
+// ─── Process 2 (the Data Access Transparency spec §5.5.2) ────────────────────────────────────────────
 
 /// Trait exposed by the proxy to Processes 1 and 2 so the verification
 /// task can read the proxy's own chain state from disk (the local
@@ -684,7 +684,7 @@ pub trait ProxyChainReader: Send + Sync {
     ) -> Result<Vec<ChainEntry>, String>;
 
     /// Enumerate per-user chain IDs held on the proxy. Used by Process
-    /// 1 (UAT §5.5.1) to iterate every per-user chain for cross-
+    /// 1 (the Data Access Transparency spec §5.5.1) to iterate every per-user chain for cross-
     /// replica head-hash verification. Returns the 64-hex-character
     /// `chain_id_user(user_id)` strings that name on-disk chain
     /// directories; the deployment chain (`_deployment`) is
@@ -776,7 +776,7 @@ struct Process2Outcome {
     /// Cursor values after the walk. On clean advance these point
     /// past the last verified pair. On mismatch these point AT the
     /// mismatching pair (the cursors are NOT advanced past a mismatch
-    /// per UAT §5.5.2 step 5).
+    /// per the Data Access Transparency spec §5.5.2 step 5).
     cursor_prx: u64,
     cursor_obs: u64,
 }
@@ -814,7 +814,7 @@ struct Process2Failure {
 const PROCESS2_PAGE_LIMIT: usize = 500;
 
 /// Walk the proxy's deployment chain and the observation chain from
-/// their cursors in lockstep (per UAT §5.5.2). Returns an outcome
+/// their cursors in lockstep (per the Data Access Transparency spec §5.5.2). Returns an outcome
 /// describing the Tick's result; errors are transport failures on the
 /// observer side (which the caller interprets as infrastructure, not
 /// tampering).
@@ -860,7 +860,7 @@ async fn run_process_2(
     // Read proxy entries starting at cursor_prx. We read eagerly up to
     // the page limit; non-projectable entries get skipped (cursor_prx
     // advances past them without consuming an observer counterpart
-    // per UAT §5.5.2 step 1).
+    // per the Data Access Transparency spec §5.5.2 step 1).
     let proxy_entries = proxy
         .read_entries(chain_id, cursor_prx, PROCESS2_PAGE_LIMIT)
         .await
@@ -905,7 +905,7 @@ async fn run_process_2(
         };
 
         // Canonicalize both payloads and byte-compare. Both sides MUST
-        // produce identical bytes for the same operation per UAT
+        // produce identical bytes for the same operation per Data Access Transparency
         // §5.5.2 payload-byte-equality invariant. A canon failure on
         // either side is surfaced as a divergence (not a silent stall)
         // so the failure chain fires and operators see the alert —
@@ -1052,7 +1052,7 @@ pub async fn start_scheduled_verification_task(
     nats: Arc<NatsClient>,
     observer_health: Option<Arc<uninc_common::SubsystemHealth>>,
     // Process 2 (§5.5.2) proxy-side chain reader. `None` disables
-    // Process 2 (Playground / tests without a local chain-store).
+    // Process 2 (single-host / tests without a local chain-store).
     proxy_chain: Option<Arc<dyn ProxyChainReader>>,
     // Deployment salt for `project_to_observed`. Must match the
     // observer's `deployment_salt` and the proxy's `chain.server_salt`.

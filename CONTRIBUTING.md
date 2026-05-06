@@ -91,7 +91,7 @@ cargo install wasm-pack --locked --version 0.13.1  # the build driver `build.sh`
 
 ## Security issues
 
-Do **not** open a public issue for security bugs. Email the maintainers (see the root repository metadata) or use GitHub's private security advisory feature. Coordinated disclosure is appreciated; we'll credit you in the release notes unless you ask us not to.
+If you discover a security vulnerability, please do **not** open a public issue. See our [SECURITY.md](SECURITY.md) for instructions on how to report it privately.
 
 ## Pull request review
 

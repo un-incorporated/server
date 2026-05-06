@@ -39,6 +39,7 @@ The closest prior art is Google's Access Transparency — proprietary, GCP-only,
   - [The Observer](#the-observer)
   - [Deployment shapes](#deployment-shapes)
   - [What a release contains](#what-a-release-contains)
+    - [Why per-role baked disk images at all](#why-per-role-baked-disk-images-at-all)
   - [Tech stack](#tech-stack)
   - [Crate map](#crate-map)
   - [Data retention and erasure](#data-retention-and-erasure)

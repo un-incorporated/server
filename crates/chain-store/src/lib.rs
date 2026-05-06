@@ -1,5 +1,5 @@
 //! Per-user and deployment-wide hash-chain storage and hashing for
-//! Uninc Access Transparency v1 (see `protocol/draft-wang-data-access-transparency-00.md`).
+//! Data Access Transparency v1 (see `protocol/draft-wang-data-access-transparency-00.md`).
 //!
 //! This crate is the shared data layer for the transparency chain: the
 //! writer (`chain-engine`, consuming NATS access events), the reader
@@ -69,7 +69,7 @@ pub use entry::{
     DeploymentActorType, DeploymentCategory, DeploymentEvent, MAX_PAYLOAD_LEN, ObservedAction,
     ObservedDeploymentEvent, PAYLOAD_TYPE_ACCESS_EVENT, PAYLOAD_TYPE_DEPLOYMENT_EVENT,
     PAYLOAD_TYPE_OBSERVED_DEPLOYMENT_EVENT, Protocol,
-    UAT_VERSION_OCTET, canonicalize_payload, compute_hash, serialize,
+    CHAIN_VERSION_OCTET, canonicalize_payload, compute_hash, serialize,
 };
 
 #[cfg(feature = "storage")]

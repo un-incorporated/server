@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
     // Observer details are read from the verification block so that a single
     // `uninc.yml` drives both the scheduled-verification observer reads and
     // the `/health` endpoint's reachability probe. When no observer is
-    // configured (single-host / Playground), both fields are None and
+    // configured (single-host), both fields are None and
     // `/health` omits the `observer` block entirely.
     let (observer_url, observer_read_secret) = match &config.verification {
         Some(v) => (v.observer_url.clone(), v.observer_read_secret.clone()),

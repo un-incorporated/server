@@ -1,6 +1,6 @@
 //! Chain verification: full O(n) walk and head-only O(1) check.
 //!
-//! Implements the verification predicate of Uninc Access Transparency v1
+//! Implements the verification predicate of Data Access Transparency v1
 //! §5.2.1 (`protocol/draft-wang-data-access-transparency-00.md`).
 
 use crate::entry::ChainEntry;

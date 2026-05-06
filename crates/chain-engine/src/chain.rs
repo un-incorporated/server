@@ -1,5 +1,5 @@
 //! High-level ChainManager: append, read, verify, head operations for
-//! per-user chains per Uninc Access Transparency v1.
+//! per-user chains per Data Access Transparency v1.
 //!
 //! The v1 spec permits empty chains (§5.2.1 V7 — an empty chain has
 //! `chain_head_hash = 0x00^32` and is valid). We therefore do NOT write

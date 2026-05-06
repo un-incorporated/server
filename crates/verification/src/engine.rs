@@ -106,7 +106,7 @@ impl VerificationEngine {
     /// a drand-seeded role assignment (Primary + Verifier) and stores it
     /// on the session record for the verification pass to read later.
     ///
-    /// If the deployment has fewer than 2 replicas (e.g. Playground
+    /// If the deployment has fewer than 2 replicas (e.g. single-host
     /// tier), the session is registered without an assignment and no
     /// verification will be scheduled for it — the trust story is
     /// honestly weaker at that tier.

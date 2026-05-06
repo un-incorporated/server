@@ -1,6 +1,6 @@
 //! Client-side chain verifier — compiled to WASM and served to the
 //! end user's browser. Implements the verification procedure of
-//! Uninc Access Transparency v1 §5.2 (`protocol/draft-wang-data-access-transparency-00.md`).
+//! Data Access Transparency v1 §5.2 (`protocol/draft-wang-data-access-transparency-00.md`).
 //!
 //! The customer's frontend fetches a list of `ChainEntry` records from
 //! the proxy's `/api/v1/chain/u/:id/entries` endpoint (directly or via

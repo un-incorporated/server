@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 /// §4.2 — protocol version octet. MUST be `0x01` for entries conforming
 /// to v1 of the specification.
-pub const UAT_VERSION_OCTET: u8 = 0x01;
+pub const CHAIN_VERSION_OCTET: u8 = 0x01;
 
 /// §4.6 — `payload_type` value indicating the payload is an `AccessEvent`.
 pub const PAYLOAD_TYPE_ACCESS_EVENT: u8 = 0x01;
@@ -46,7 +46,7 @@ pub enum EntryError {
     NullLiteral(String),
 }
 
-/// A single entry in a UAT v1 chain.
+/// A single entry in a Data Access Transparency v1 chain.
 ///
 /// The binary layout produced by [`serialize`] matches §4.1:
 ///
@@ -476,7 +476,7 @@ impl ChainEntry {
     ) -> Result<Self, EntryError> {
         let payload_type = payload.payload_type();
         let mut entry = Self {
-            version: UAT_VERSION_OCTET,
+            version: CHAIN_VERSION_OCTET,
             index,
             timestamp,
             prev_hash,
@@ -604,7 +604,7 @@ mod tests {
     #[test]
     fn access_entry_constructs_and_verifies() {
         let entry = ChainEntry::access(0, [0u8; 32], 1_712_592_000, sample_access_event()).unwrap();
-        assert_eq!(entry.version, UAT_VERSION_OCTET);
+        assert_eq!(entry.version, CHAIN_VERSION_OCTET);
         assert_eq!(entry.payload_type, PAYLOAD_TYPE_ACCESS_EVENT);
         assert_eq!(entry.prev_hash, [0u8; 32]);
         assert!(entry.verify_hash());
@@ -634,7 +634,7 @@ mod tests {
     fn observed_entry_constructs_and_verifies() {
         let entry =
             ChainEntry::observed(0, [0u8; 32], 1_712_592_000, sample_observed_org_event()).unwrap();
-        assert_eq!(entry.version, UAT_VERSION_OCTET);
+        assert_eq!(entry.version, CHAIN_VERSION_OCTET);
         assert_eq!(entry.payload_type, PAYLOAD_TYPE_OBSERVED_DEPLOYMENT_EVENT);
         assert!(entry.verify_hash());
     }

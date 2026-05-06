@@ -664,7 +664,7 @@ pub struct VerificationConfig {
     #[serde(default = "default_verifier_count")]
     pub verifier_count: u32,
 
-    /// Connection info for each replica. Empty in the free Playground tier;
+    /// Connection info for each replica. Empty in the free tier;
     /// populated with 3+ entries in the paid tier.
     #[serde(default)]
     pub replicas: Vec<ReplicaConfig>,
@@ -683,7 +683,7 @@ pub struct VerificationConfig {
 
     /// Base URL of this deployment's observer VM HTTP surface, used by
     /// the scheduled verification task to fetch the observer's chain
-    /// head and cross-compare with the proxy's own head (UAT §3.3).
+    /// head and cross-compare with the proxy's own head (the Data Access Transparency spec §3.3).
     /// Example: `"http://10.0.3.5:2026"`. `None` disables the comparison
     /// (single-host / Playground topologies with no observer).
     #[serde(default)]

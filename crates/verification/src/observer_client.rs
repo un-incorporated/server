@@ -5,7 +5,7 @@
 //! shape `{ "chain_id": "...", "head_hash": "<hex>|null }`. The
 //! scheduled verification task fetches the observer's deployment-chain
 //! head once per run and byte-compares it to the proxy's own head —
-//! UAT §3.3 requires that any mismatch emit a `verification_failure`
+//! the Data Access Transparency spec §3.3 requires that any mismatch emit a `verification_failure`
 //! DeploymentEvent on the deployment chain.
 //!
 //! This module provides the `ObserverHeadReader` trait and the
@@ -75,13 +75,13 @@ pub trait ObserverHeadReader: Send + Sync {
     /// `"_deployment"`).
     ///
     /// Returns `Ok(None)` when the observer's chain is empty — matches
-    /// the UAT §5.1 V7 convention that an empty chain's head is 32 zero
+    /// the the Data Access Transparency spec §5.1 V7 convention that an empty chain's head is 32 zero
     /// octets. Callers that need the 32-byte form can translate
     /// `None` → `[0u8; 32]` at the comparison site.
     async fn read_head(&self, chain_id: &str) -> Result<Option<[u8; 32]>, ObserverError>;
 
     /// Fetch a paginated range of observer chain entries. Used by
-    /// Process 2 of Scheduled Verification (UAT §5.5.2) to advance the
+    /// Process 2 of Scheduled Verification (the Data Access Transparency spec §5.5.2) to advance the
     /// `cursor_obs` cursor entry-by-entry. `cursor` is 0-based; `limit`
     /// bounds the page size (observer enforces 1..=500). `head_hash` is
     /// the observer's current head at read time, returned for drift
